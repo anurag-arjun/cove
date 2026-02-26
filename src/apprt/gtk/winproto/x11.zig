@@ -61,7 +61,7 @@ pub const App = struct {
         //
         // This makes the property show up like so when using xprop:
         //
-        //     WM_CLASS(STRING) = "ghostty", "com.mitchellh.ghostty"
+        //     WM_CLASS(STRING) = "cove", "dev.cove.terminal"
         //
         // Append "-debug" on both when using the debug build.
         glib.setPrgname(x11_program_name);

@@ -23,14 +23,14 @@ pub const must_draw_from_app_thread = true;
 
 /// GTK application ID
 pub const application_id = switch (builtin.mode) {
-    .Debug, .ReleaseSafe => "com.mitchellh.ghostty-debug",
-    .ReleaseFast, .ReleaseSmall => "com.mitchellh.ghostty",
+    .Debug, .ReleaseSafe => "dev.cove.terminal-debug",
+    .ReleaseFast, .ReleaseSmall => "dev.cove.terminal",
 };
 
 /// GTK object path
 pub const object_path = switch (builtin.mode) {
-    .Debug, .ReleaseSafe => "/com/mitchellh/ghostty_debug",
-    .ReleaseFast, .ReleaseSmall => "/com/mitchellh/ghostty",
+    .Debug, .ReleaseSafe => "/dev/cove/terminal_debug",
+    .ReleaseFast, .ReleaseSmall => "/dev/cove/terminal",
 };
 
 /// The GObject Application instance

@@ -9,16 +9,16 @@ const DBus = @import("DBus.zig");
 // Use a D-Bus method call to open a new window on GTK.
 // See: https://wiki.gnome.org/Projects/GLib/GApplication/DBusAPI
 //
-// `ghostty +new-window` is equivalent to the following command (on a release build):
+// `cove +new-window` is equivalent to the following command (on a release build):
 //
 // ```
-// gdbus call --session --dest com.mitchellh.ghostty --object-path /com/mitchellh/ghostty --method org.gtk.Actions.Activate new-window [] []
+// gdbus call --session --dest dev.cove.terminal --object-path /dev/cove/terminal --method org.gtk.Actions.Activate new-window [] []
 // ```
 //
-// `ghostty +new-window -e echo hello` would be equivalent to the following command (on a release build):
+// `cove +new-window -e echo hello` would be equivalent to the following command (on a release build):
 //
 // ```
-// gdbus call --session --dest com.mitchellh.ghostty --object-path /com/mitchellh/ghostty --method org.gtk.Actions.Activate new-window-command '[<@as ["echo" "hello"]>]' []
+// gdbus call --session --dest dev.cove.terminal --object-path /dev/cove/terminal --method org.gtk.Actions.Activate new-window-command '[<@as ["echo" "hello"]>]' []
 // ```
 pub fn newWindow(alloc: Allocator, target: apprt.ipc.Target, value: apprt.ipc.Action.NewWindow) (Allocator.Error || std.Io.Writer.Error || apprt.ipc.Errors)!bool {
     var dbus = try DBus.init(

@@ -8,8 +8,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 /// Prefix/appid for the gresource file.
-pub const prefix = "/com/mitchellh/ghostty";
-pub const app_id = "com.mitchellh.ghostty";
+pub const prefix = "/dev/cove/terminal";
+pub const app_id = "dev.cove.terminal";
 
 /// The path to the Blueprint files. The folder structure is expected to be
 /// `{version}/{name}.blp` where `version` is the major and minor

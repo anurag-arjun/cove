@@ -1700,9 +1700,9 @@ pub const Window = extern struct {
         _: ?*glib.Variant,
         self: *Self,
     ) callconv(.c) void {
-        const name = "Ghostty";
-        const icon = "com.mitchellh.ghostty";
-        const website = "https://ghostty.org";
+        const name = "Cove";
+        const icon = "dev.cove.terminal";
+        const website = "https://github.com/nickalvault/cove";
 
         if (adw_version.supportsDialogs()) {
             adw.showAboutDialog(
@@ -1710,13 +1710,13 @@ pub const Window = extern struct {
                 "application-name",
                 name,
                 "developer-name",
-                i18n._("Ghostty Developers"),
+                i18n._("Cove Contributors"),
                 "application-icon",
                 icon,
                 "version",
                 build_config.version_string.ptr,
                 "issue-url",
-                "https://github.com/ghostty-org/ghostty/issues",
+                "https://github.com/nickalvault/cove/issues",
                 "website",
                 website,
                 @as(?*anyopaque, null),
@@ -1729,7 +1729,7 @@ pub const Window = extern struct {
                 "logo-icon-name",
                 icon,
                 "title",
-                i18n._("About Ghostty"),
+                i18n._("About Cove"),
                 "version",
                 build_config.version_string.ptr,
                 "website",

@@ -20,52 +20,48 @@ After research spikes on both approaches (see `spike-strategy1-gtk4-rewrite.md` 
 
 ## Current State
 
-### ✅ Done
-- [x] Analyzed cmux macOS codebase (~65K lines Swift, AppKit/Metal/libghostty)
-- [x] Analyzed Ghostty GTK frontend architecture (~18K lines Zig)
-- [x] Mapped cmux features → Zig/GTK equivalents (see spike docs)
-- [x] Identified libghostty C API surface (ghostty.h) and action system
-- [x] Confirmed WebKitGTK 6.0 is mature for in-app browser (P2)
-- [x] Confirmed Ghostty MIT license allows forking
-- [x] Cloned Ghostty repo into `/home/lighto/code/misc/cmux-try/`
-- [x] Confirmed CachyOS has Zig 0.15.2 (exact version needed by `build.zig.zon`)
-- [x] Installed all build dependencies on CachyOS
+### ✅ Phase 0 — Repository & Attribution (Complete)
+- [x] Renamed binary from `ghostty` to `cove` (`GhosttyExe.zig`)
+- [x] Changed app ID from `com.mitchellh.ghostty` to `dev.cove.terminal` across all files
+- [x] Updated About dialog (name→Cove, developer→Cove Contributors, URLs→anurag-arjun/cove)
+- [x] Updated all user-facing strings (notifications, inspector title, debug warnings, menu labels)
+- [x] Kept internal GObject class names (`GhosttyApplication`, etc.) unchanged — minimizes rebase conflicts
+- [x] Created `README.md` with project description + Ghostty/cmux credits
+- [x] Created `THIRD_PARTY_LICENSES.md` with verbatim MIT licenses
+- [x] Created GitHub repo: `github.com/anurag-arjun/cove` (public)
+- [x] Set up remotes: `origin` → anurag-arjun/cove, `upstream` → ghostty-org/ghostty
+- [x] Created `cove/main` branch, pushed and tracking `origin/cove/main`
+- [x] `main` branch tracks upstream Ghostty exactly (never commit Cove code here)
+- [x] Commit: `6816b450a` — "cove: Phase 0 — rename to Cove, add attribution, set up repo"
 
-### 🟡 Verified Dependencies (2026-02-26)
-All required packages confirmed installed via pacman:
-| Package | Version |
-|---------|---------|
-| zig | 0.15.2 |
-| gtk4 | 4.20.3 |
-| libadwaita | 1.8.4 |
-| blueprint-compiler | 0.18.0 |
-| pkgconf | 2.5.1 |
-| pandoc-cli | 3.5 |
-| gettext | 1.0 |
+### ✅ Phase 1 — Vertical Sidebar (Core Complete, Polish Remaining)
+- [x] Replaced `AdwTabOverview` + `AdwTabBar` with `GtkPaned` + sidebar `GtkListBox`
+- [x] Kept `AdwTabView` internally for page management (key architectural decision — see notes)
+- [x] Sidebar shows workspace list with titles bound from tab page titles
+- [x] Clicking a sidebar row selects the corresponding workspace
+- [x] Tab page selection changes sync to sidebar automatically
+- [x] Added `sidebar-visible` property with `win.toggle-sidebar` action
+- [x] Added toggle button in header bar (sidebar-show-symbolic icon)
+- [x] Added "Toggle Sidebar" entry in main menu
+- [x] Removed: `AdwTabOverview`, `AdwTabBar`, tab context menu, tab overview focus timer
+- [x] Removed: `tabs-autohide`/`tabs-visible`/`tabs-wide` properties (replaced by sidebar)
+- [x] Added `.cove-sidebar` CSS class with `navigation-sidebar` styling
+- [x] `toggleTabOverview()` now delegates to `toggleSidebar()` for API compatibility
+- [x] Commit: `6363939c4` — "cove: Phase 1 — vertical sidebar replaces tab bar"
+- [x] Build verified: `./build.sh` produces working `zig-out/bin/cove` with sidebar
 
-### ✅ First Build (2026-02-26)
-Ghostty builds and runs on CachyOS. Two workarounds needed:
-
-1. **GCC 15 SFrame linker issue:** Zig's LLD and self-hosted linker can't handle `R_X86_64_PC64` relocations in GCC 15's CRT objects (`.sframe` sections). Fix: `objcopy --remove-section=.sframe` on `crt1.o`/`crti.o`/`crtn.o`, then use `--libc` flag pointing to patched CRT dir.
-2. **Conda Python conflict:** `blueprint-compiler` uses `#!/usr/bin/env python3` which picks up conda's Python 3.12 (missing `gi` module) instead of system Python 3.14. Fix: override `PATH=/usr/bin:...` during build.
-
-Both workarounds are encapsulated in `./build.sh`:
-```bash
-./build.sh          # build only
-./build.sh run      # build + run
-```
-
-### 🔲 Next: Phase 0 — Repository & Attribution
-- [ ] Rename project to **Cove** (binary: `cove`, app ID: `dev.cove.terminal`)
-- [ ] Write `README.md` with credits for Ghostty and cmux
-- [ ] Write `THIRD_PARTY_LICENSES.md`
-- [ ] Set up GitHub repo and branch structure (see plan.md)
+#### Phase 1 Polish (Not Yet Done)
+- [ ] Keyboard navigation (Up/Down in sidebar, Enter to select)
+- [ ] Middle-click sidebar row to close workspace
+- [ ] Right-click context menu on sidebar rows (rename, close)
+- [ ] Sidebar auto-hide when only 1 workspace (config option)
+- [ ] Double-click sidebar row to rename workspace
+- [ ] Persist sidebar width in config
 
 ### 🔲 Not Started
-- [ ] Phase 1: Vertical sidebar (replace AdwTabBar)
-- [ ] Phase 2: Notification system
-- [ ] Phase 3: Workspace metadata (git branch, ports, pwd)
-- [ ] Phase 4: Socket API & CLI
+- [ ] Phase 2: Notification system (blue badges, desktop notifications)
+- [ ] Phase 3: Workspace metadata (git branch, ports, pwd in sidebar rows)
+- [ ] Phase 4: Socket API & CLI (`cove +list-workspaces`, etc.)
 - [ ] Phase 5: Browser panel (WebKitGTK)
 - [ ] Phase 6: Session persistence
 
@@ -75,48 +71,93 @@ Both workarounds are encapsulated in `./build.sh`:
 
 **Full detail in [plan.md](plan.md).** Summary:
 
-| Phase | Feature | Est. Lines | Timeline |
-|-------|---------|-----------|----------|
-| 0 | Repo, build, README, attribution | 100 | Day 1 |
-| 1 | Vertical sidebar (replace AdwTabBar) | 1,700 | Week 1–2 |
-| 2 | Notification system | 400 | Week 2–3 |
-| 3 | Workspace metadata (git, ports, pwd) | 600 | Week 3–4 |
-| 4 | Socket API & CLI (`cove +cmd`) | 2,500 | Week 4–6 |
-| 5 | Browser panel (WebKitGTK) | 2,000 | Week 6–8 |
-| 6 | Session persistence | 500 | Week 8–9 |
+| Phase | Feature | Est. Lines | Status |
+|-------|---------|-----------|--------|
+| 0 | Repo, build, README, attribution | 100 | ✅ Done |
+| 1 | Vertical sidebar (replace AdwTabBar) | 1,700 | 🟡 Core done, polish remaining |
+| 2 | Notification system | 400 | 🔲 Not started |
+| 3 | Workspace metadata (git, ports, pwd) | 600 | 🔲 Not started |
+| 4 | Socket API & CLI (`cove +cmd`) | 2,500 | 🔲 Not started |
+| 5 | Browser panel (WebKitGTK) | 2,000 | 🔲 Not started |
+| 6 | Session persistence | 500 | 🔲 Not started |
+
+---
+
+## Key Architecture Decisions
+
+### Keep AdwTabView internally (Phase 1)
+
+The plan originally called for replacing `AdwTabView` with `GtkStack`. Instead, we kept `AdwTabView` as the internal page container and just removed its visible UI components (`AdwTabBar`, `AdwTabOverview`). Rationale:
+
+- `AdwTabView` handles page ordering, close confirmation, drag-and-drop, signals — all for free
+- Replacing it with `GtkStack` would require reimplementing all that page management logic
+- Tab.zig's `getTabView()` method (used for close/reorder/navigate actions) continues to work unchanged
+- Much smaller diff = much easier rebases against upstream Ghostty
+- The sidebar is an additional navigation layer on top, not a replacement of the data model
+
+**Window layout after Phase 1:**
+```
+AdwApplicationWindow
+└── GtkPaned (horizontal, position: 220px)
+    ├── [start] GtkBox .cove-sidebar
+    │   ├── GtkBox (header: "Workspaces" label + "+" button)
+    │   └── GtkScrolledWindow → GtkListBox .navigation-sidebar
+    └── [end] AdwToolbarView
+        ├── [top] AdwHeaderBar (sidebar toggle + menu)
+        └── AdwToastOverlay
+            └── AdwTabView (hidden tab bar, managed internally)
+```
+
+### Don't use vX.Y.Z tags (Build system)
+
+Ghostty's build system (`GitVersion.zig`) uses `git describe --exact-match --tags` and panics if a tag doesn't match the `vX.Y.Z` format in `build.zig`. Our initial `v0.0.1-scaffold` tag broke the build. Solution: don't tag Cove commits with `v`-prefixed semver tags. Use `cove-*` prefixed tags if needed, or no tags at all.
+
+### Keep GObject class names unchanged
+
+Internal GObject type names (`GhosttyApplication`, `GhosttyWindow`, `GhosttySplitTree`, etc.) are kept as-is. Changing them would be a massive diff touching dozens of files and Blueprint templates, with no user-facing benefit. Only user-visible strings (About dialog, notification titles, menu labels, debug warnings) were updated to "Cove".
 
 ---
 
 ## Key Files Reference
 
-### Ghostty GTK files we'll heavily modify
-| File | Lines | Role |
-|------|-------|------|
-| `src/apprt/gtk/class/window.zig` | 2,071 | Main window — sidebar goes here |
-| `src/apprt/gtk/class/application.zig` | 2,790 | Action dispatch — notification handling |
-| `src/apprt/gtk/class/tab.zig` | 570 | Becomes "workspace" |
-| `src/apprt/gtk/ui/1.5/window.blp` | ~250 | Window Blueprint — new layout |
+### Files modified by Cove (potential rebase conflicts)
+| File | Phase | Change |
+|------|-------|--------|
+| `src/build/GhosttyExe.zig` | 0 | Binary name: `cove` |
+| `src/apprt/gtk/App.zig` | 0 | App ID: `dev.cove.terminal` |
+| `src/apprt/gtk/build/gresource.zig` | 0 | Resource prefix/app_id |
+| `src/apprt/gtk/class/application.zig` | 0 | Resource path, notification title, icon |
+| `src/apprt/gtk/class/surface.zig` | 0 | Notification icon |
+| `src/apprt/gtk/class/window.zig` | 0, 1 | About dialog, sidebar replaces tab bar (heavy) |
+| `src/apprt/gtk/ui/1.5/window.blp` | 1 | Full layout rewrite (GtkPaned + sidebar) |
+| `src/apprt/gtk/css/style.css` | 1 | `.cove-sidebar` styles |
+| `src/apprt/gtk/ipc/new_window.zig` | 0 | Comment updates |
+| `src/apprt/gtk/winproto/x11.zig` | 0 | WM_CLASS comment |
+| `src/apprt/gtk/ui/1.5/inspector-window.blp` | 0 | Title, icon |
+| `src/apprt/gtk/ui/1.2/debug-warning.blp` | 0 | Debug text |
+| `src/apprt/gtk/ui/1.3/debug-warning.blp` | 0 | Debug text |
+
+### Files created by Cove (no rebase conflicts)
+```
+README.md
+THIRD_PARTY_LICENSES.md
+build.sh
+docs/plan.md
+docs/progress.md
+docs/spike-strategy1-gtk4-rewrite.md
+docs/spike-strategy2-ghostty-fork.md
+```
 
 ### Ghostty GTK files we keep as-is
-| File | Lines | Role |
-|------|-------|------|
-| `src/apprt/gtk/class/surface.zig` | 3,974 | Terminal widget (GLArea + input) |
-| `src/apprt/gtk/class/split_tree.zig` | 1,241 | Split pane management |
-| `src/apprt/gtk/class/search_overlay.zig` | 493 | Find-in-terminal |
-| `src/apprt/gtk/key.zig` | 535 | Keyboard translation |
-| `src/apprt/gtk/winproto/` | ~300 | Wayland/X11 protocol |
-| `src/renderer/OpenGL.zig` | — | GPU renderer |
-
-### cmux macOS files for feature reference
-| Feature | cmux Swift file | Lines |
-|---------|----------------|-------|
-| Tab/workspace management | `Sources/TabManager.swift` | 3,473 |
-| Notifications | `Sources/TerminalNotificationStore.swift` | 512 |
-| Session save/restore | `Sources/SessionPersistence.swift` | 474 |
-| Workspace model | `Sources/Workspace.swift` | 4,121 |
-| Sidebar + main UI | `Sources/ContentView.swift` | 8,843 |
-| Socket API | `CLI/cmux.swift` + `Sources/TerminalController.swift` | 5,414 |
-| Browser panel | `Sources/Panels/BrowserPanel.swift` | ~2,000 |
+| File | Role |
+|------|------|
+| `src/apprt/gtk/class/surface.zig` | Terminal widget (GLArea + input) |
+| `src/apprt/gtk/class/split_tree.zig` | Split pane management |
+| `src/apprt/gtk/class/tab.zig` | Workspace container (Tab → conceptually "workspace") |
+| `src/apprt/gtk/class/search_overlay.zig` | Find-in-terminal |
+| `src/apprt/gtk/key.zig` | Keyboard translation |
+| `src/apprt/gtk/winproto/` | Wayland/X11 protocol |
+| `src/renderer/OpenGL.zig` | GPU renderer |
 
 ---
 
@@ -124,9 +165,30 @@ Both workarounds are encapsulated in `./build.sh`:
 
 - **OS:** CachyOS (Arch-based)
 - **Zig:** 0.15.2 (from `cachyos-extra-v3`)
-- **GTK4:** via pacman
+- **GTK4:** 4.20.3
+- **libadwaita:** 1.8.4
 - **Project dir:** `/home/lighto/code/misc/cmux-try/`
-- **Upstream:** `https://github.com/ghostty-org/ghostty` (cloned, not forked on GitHub yet)
+- **GitHub:** `github.com/anurag-arjun/cove` (public)
+- **Upstream:** `github.com/ghostty-org/ghostty` (remote: `upstream`)
+
+---
+
+## Git State
+
+```
+Remotes:
+  origin   → git@github.com:anurag-arjun/cove.git
+  upstream → https://github.com/ghostty-org/ghostty.git
+
+Branches:
+  cove/main → origin/cove/main (our work)
+  main      → upstream/main (tracks Ghostty, never commit here)
+
+Commits (cove/main):
+  6363939c4 cove: Phase 1 — vertical sidebar replaces tab bar
+  6816b450a cove: Phase 0 — rename to Cove, add attribution, set up repo
+  74ba971eb (upstream) Update VOUCHED list (#11028)
+```
 
 ---
 
@@ -136,6 +198,7 @@ Both workarounds are encapsulated in `./build.sh`:
 - Ghostty's GTK frontend is in `src/apprt/gtk/`. The macOS frontend is in `macos/` (irrelevant for us).
 - libghostty's C header is at `include/ghostty.h` — but we use the Zig module interface directly (same as Ghostty's GTK frontend does).
 - Both Ghostty and cmux are MIT licensed. No conflicts.
+- Sidebar rows store a pointer to their `AdwTabPage` via `gobject.Object.setData("cove-tab-page", page)`. Retrieved via `@ptrCast(@alignCast(getData(...)))` — can't use `gobject.ext.cast` on `*anyopaque`.
 
 ---
 
@@ -155,63 +218,46 @@ Both workarounds are encapsulated in `./build.sh`:
 - All CachyOS build dependencies installed and verified
 - Detailed implementation plan with file-level targets for all 6 phases
 
-**What was NOT done:**
-- No source modifications made — repo is stock Ghostty
-
-**Next actions (in order):**
-1. ~~Run `zig build run` to verify Ghostty builds and runs on CachyOS~~ ✅ Done
-2. Phase 0: set up repo as "Cove", write README with Ghostty/cmux credits, create GitHub repo
-3. Begin Phase 1: create sidebar widget, modify `window.zig` to replace `AdwTabBar` with `GtkPaned` + sidebar
-
 ### Session 2026-02-26 (cont.) — First Build Successful
 
 **Build issues encountered and resolved:**
-1. **GCC 15 SFrame linker error** (`R_X86_64_PC64` in `crt1.o:.sframe`): Zig 0.15's LLD *and* self-hosted linker both fail. `-Dcpu=baseline` and `use_lld=false` don't help. Fix: strip `.sframe`/`.rela.sframe` from CRT objects via `objcopy`, use `--libc` to point Zig to patched CRT dir.
-2. **Conda Python 3.12 vs system Python 3.14**: `blueprint-compiler` uses `#!/usr/bin/env python3` → finds conda python without `gi` module → silent crash. Fix: `PATH=/usr/bin:...` override.
+1. **GCC 15 SFrame linker error**: Zig 0.15's LLD and self-hosted linker both fail on `R_X86_64_PC64` in `.sframe`. Fix: strip sections via `objcopy`, use `--libc` to point to patched CRT dir.
+2. **Conda Python 3.12 vs system Python 3.14**: Fix: `PATH=/usr/bin:...` override.
 
 **Created:** `build.sh` — wrapper script encapsulating both workarounds.
 
-**Verified:** Ghostty launches on Wayland (KDE/CachyOS), detects OpenGL 4.6, starts fish shell, renders terminal.
-
 ### Session 2026-02-26 (cont.) — Naming & Plan Finalized
 
-**Decisions:**
-1. **Project renamed to "Cove"** — `cmux` is Manaflow AI's brand (cmux.dev, GitHub, Homebrew). Using it for an unofficial Linux port would be confusing/problematic. "Cove" is short, unique, no conflicts.
-2. **Binary:** `cove`, **App ID:** `dev.cove.terminal`, **Socket:** `$XDG_RUNTIME_DIR/cove/socket`
-3. **Attribution required:** README must prominently credit Ghostty (terminal engine) and cmux (feature inspiration). `THIRD_PARTY_LICENSES.md` with verbatim MIT licenses.
-4. **Git strategy:** `upstream` remote tracks `ghostty-org/ghostty`, `origin` is our repo. `cove/main` branch for our work, `main` tracks upstream exactly. Rebase weekly, never merge. Commits prefixed `cove:`.
-5. **Ghostty config compatibility:** Cove reads `~/.config/ghostty/config`. Cove-specific settings go in `~/.config/cove/config`.
+**Decisions:** Project renamed to "Cove". Binary: `cove`, App ID: `dev.cove.terminal`. Git rebase-only workflow. Created `docs/plan.md`.
 
-**Created:** `docs/plan.md` — comprehensive build plan (naming, attribution, git strategy, 7 phases, risk register, file impact map).
+### Session 2026-02-26 (cont.) — Phase 0 & Phase 1 Complete
 
-**Next:** Phase 0 — create GitHub repo, README, THIRD_PARTY_LICENSES.md, rename binary
+**Phase 0 completed:**
+- Binary renamed `ghostty` → `cove` (`GhosttyExe.zig`)
+- App ID changed to `dev.cove.terminal` across 10+ files (App.zig, gresource.zig, application.zig, surface.zig, window.zig, inspector-window.blp, etc.)
+- About dialog updated: name→Cove, developer→Cove Contributors, URLs→anurag-arjun/cove
+- README.md and THIRD_PARTY_LICENSES.md created
+- GitHub repo created at `github.com/anurag-arjun/cove` (public)
+- Remotes set up: `origin` (our repo) + `upstream` (Ghostty)
+- `cove/main` branch created and pushed
 
-### Session 2026-02-26 (cont.) — Session State Snapshot
+**Phase 1 (sidebar) completed (core):**
+- Removed `AdwTabOverview` (grid overview) and `AdwTabBar` (horizontal tab bar) from window layout
+- Added `GtkPaned` with sidebar `GtkBox` containing `GtkListBox` (`.navigation-sidebar` style)
+- Sidebar rows are created dynamically when pages attach, removed when pages detach
+- Row titles bound to `AdwTabPage` title property via `gobject.Object.bindProperty`
+- Sidebar selection syncs bidirectionally with `AdwTabView` selected page
+- Anti-reentrance guard (`updating_sidebar` flag) prevents signal loops
+- `sidebar-visible` property with bidirectional binding to toggle button
+- `win.toggle-sidebar` action + main menu entry
+- `toggleTabOverview()` redirected to `toggleSidebar()` for Ghostty action compatibility
+- Removed dead code: `tabOverviewCreateTab`, `tabOverviewOpen`, `tabOverviewFocusTimer`, `setupTabMenu`, `closureTitlebarStyleIsTab`, `actionPromptContextTabTitle`, `context_menu_page` field, `tab_overview_focus_timer` field
 
-**Summary of all sessions today:** Three sessions covering research → first build → naming/planning.
-
-**All key decisions (consolidated):**
-1. Fork Ghostty's GTK frontend (Strategy 2) — not a from-scratch rewrite
-2. Project name: **Cove** (not cmux — that's Manaflow AI's brand)
-3. Binary: `cove`, App ID: `dev.cove.terminal`
-4. Git: rebase-only workflow, `cove/main` branch, `cove:` commit prefix
-5. Must credit Ghostty (engine) and cmux (inspiration) prominently in README
-6. Reads `~/.config/ghostty/config` for terminal settings, `~/.config/cove/config` for Cove-specific
-
-**All work products:**
-- `docs/spike-strategy1-gtk4-rewrite.md` — research spike (GTK4 rewrite option)
-- `docs/spike-strategy2-ghostty-fork.md` — research spike (Ghostty fork option, chosen)
-- `docs/plan.md` — full build plan (naming, attribution, git strategy, 7 phases, risk register, file map)
-- `docs/progress.md` — this file
-- `build.sh` — build wrapper (CachyOS SFrame + conda Python workarounds)
-- `crt-patched/` — patched CRT objects for GCC 15 compatibility (gitignored)
-
-**Repo state:** Stock Ghostty at commit `74ba971eb` (v1.3.0-dev). No source modifications. Builds and runs via `./build.sh run`.
+**Build issues encountered:**
+- `v0.0.1-scaffold` tag broke build — Ghostty's `GitVersion.zig` panics on non-matching `vX.Y.Z` tags. Solution: deleted tag, don't use `v`-prefixed tags for Cove.
+- GTK/GObject type mismatches: `setHexpand(true)` needs `@intFromBool(true)` (c_int, not bool); `getData()` returns `*anyopaque` requiring `@ptrCast` not `gobject.ext.cast`.
 
 **Next actions (in order):**
-1. **Phase 0:** Create GitHub repo `cove`, set up remotes + branch structure
-2. **Phase 0:** Write `README.md` (project description + Ghostty/cmux credits)
-3. **Phase 0:** Write `THIRD_PARTY_LICENSES.md` (verbatim MIT licenses)
-4. **Phase 0:** Rename binary from `ghostty` to `cove` in build system, update app ID
-5. **Phase 0:** Commit everything, tag `v0.0.1-scaffold`
-6. **Phase 1:** Begin vertical sidebar implementation
+1. **Phase 1 polish:** Keyboard nav, middle-click close, right-click context menu, auto-hide, rename, persist width
+2. **Phase 2:** Notification system — blue badges on sidebar rows, desktop notifications via GLib
+3. **Phase 3:** Workspace metadata — git branch, pwd, ports in sidebar rows

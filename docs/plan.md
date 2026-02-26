@@ -93,27 +93,20 @@ So we fork the whole repo, modify `src/apprt/gtk/` to add Cove features, and per
 ### Repository setup
 
 ```
-github.com/YOUR_USER/cove     ← our repo (private or public)
+github.com/anurag-arjun/cove  ← our repo (public)
   ├── upstream remote → ghostty-org/ghostty (read-only, for rebasing)
-  └── origin remote   → YOUR_USER/cove
+  └── origin remote   → anurag-arjun/cove
 ```
 
-**Steps to set up:**
+**Setup completed.** Current state:
 ```bash
-cd /home/lighto/code/misc/cmux-try
+# Remotes
+origin   → git@github.com:anurag-arjun/cove.git
+upstream → https://github.com/ghostty-org/ghostty.git
 
-# Rename current remote
-git remote rename origin upstream
-
-# Create your GitHub repo (private initially), then:
-git remote add origin git@github.com:YOUR_USER/cove.git
-
-# Create our working branch
-git checkout -b cove/main
-git push -u origin cove/main
-
-# Keep upstream tracking for rebases
-git fetch upstream main
+# Branches
+cove/main → origin/cove/main  (our work)
+main      → upstream/main      (tracks Ghostty exactly)
 ```
 
 ### Branch model
@@ -169,25 +162,28 @@ Prefix all Cove commits with `cove:` so they're easy to identify during rebases 
 
 ## Phased Build Plan
 
-### Phase 0: Repository & Build Foundation (Day 1)
+### Phase 0: Repository & Build Foundation (Day 1) ✅ COMPLETE
 
 **Goal:** Clean repo setup, reproducible build, proper attribution.
 
-- [ ] Create GitHub repo `cove`
-- [ ] Set up remotes (`origin` + `upstream`)
-- [ ] Create `cove/main` branch
-- [ ] Write `README.md` with project description, credits, and build instructions
-- [ ] Write `THIRD_PARTY_LICENSES.md` with Ghostty and cmux MIT licenses
-- [ ] Commit `build.sh` and `docs/` (build workarounds, spike docs, this plan)
-- [ ] Add `.gitignore` entries for `crt-patched/`, `.zig-cache/`, `zig-out/`
-- [ ] Rename binary output from `ghostty` to `cove` in build system
-- [ ] Update app ID from `com.mitchellh.ghostty` to Cove's ID
-- [ ] Verify `./build.sh run` launches the terminal
-- [ ] Tag: `v0.0.1-scaffold`
+- [x] Create GitHub repo `cove` → `github.com/anurag-arjun/cove` (public)
+- [x] Set up remotes (`origin` → anurag-arjun/cove, `upstream` → ghostty-org/ghostty)
+- [x] Create `cove/main` branch
+- [x] Write `README.md` with project description, credits, and build instructions
+- [x] Write `THIRD_PARTY_LICENSES.md` with Ghostty and cmux MIT licenses
+- [x] Commit `build.sh` and `docs/` (build workarounds, spike docs, this plan)
+- [x] Add `.gitignore` entries for `crt-patched/`
+- [x] Rename binary output from `ghostty` to `cove` in `GhosttyExe.zig`
+- [x] Update app ID from `com.mitchellh.ghostty` to `dev.cove.terminal` (App.zig, gresource.zig, application.zig, surface.zig, window.zig, inspector-window.blp)
+- [x] Update About dialog, notification titles, debug warnings to "Cove"
+- [x] Verify `./build.sh run` launches the terminal
+- [x] ~~Tag: `v0.0.1-scaffold`~~ — **Cannot use vX.Y.Z tags** (Ghostty's GitVersion.zig panics on non-matching semver tags)
 
+**Commit:** `6816b450a`
 **Files created:** `README.md`, `THIRD_PARTY_LICENSES.md`, `build.sh`, `docs/`
-**Files modified:** `build.zig` or `GhosttyExe.zig` (binary name), `application.zig` (app ID)
-**Est:** 2–3 hours
+**Files modified:** `GhosttyExe.zig`, `App.zig`, `gresource.zig`, `application.zig`, `surface.zig`, `window.zig`, `new_window.zig`, `x11.zig`, `inspector-window.blp`, `debug-warning.blp` (×2), `window.blp`
+
+**Lesson learned:** Internal GObject class names (GhosttyApplication, GhosttyWindow, etc.) were intentionally NOT renamed — changing them touches dozens of files/templates and makes rebasing against upstream nearly impossible.
 
 ---
 
@@ -195,93 +191,54 @@ Prefix all Cove commits with `cove:` so they're easy to identify during rebases 
 
 **Goal:** Replace Ghostty's horizontal `AdwTabBar` with a vertical sidebar showing workspace list. This is the biggest single change — it touches the window's core layout.
 
-#### 1a. Workspace model (rename Tab → Workspace)
+#### 1a–c. Sidebar implementation ✅ COMPLETE
 
-Ghostty's `Tab` is a `GtkBox` containing a `SplitTree`. We rename it conceptually to "Workspace" but keep the Zig struct name `Tab` initially to minimize diff (easier rebases). The sidebar just needs to display a list of these.
+**Actual approach differed from plan:** Instead of creating separate `sidebar.zig`/`sidebar_row.zig` GObject widgets and replacing `AdwTabView` with `GtkStack`, we took a simpler approach:
 
-- [ ] Add workspace metadata fields to `tab.zig`: `notification_count: u32`, `is_active: bool`, `workspace_title: ?[]const u8`
-- [ ] Add GObject properties for these so the sidebar can bind to them
+1. **Kept `AdwTabView` internally** — it handles page ordering, close confirmation, and signals. Much less code than reimplementing with `GtkStack`.
+2. **Built sidebar directly in `window.blp`** — a `GtkBox` with `GtkListBox` inside a `GtkPaned`, no separate GObject widget needed.
+3. **Sidebar rows are plain `GtkLabel`s** created programmatically in `window.zig` with title bound via `gobject.Object.bindProperty`. Page reference stored via `gobject.Object.setData("cove-tab-page", page)`.
+4. **Did NOT rename Tab → Workspace in code** — kept `Tab` struct name to minimize diff. Only user-facing strings say "Workspace".
+5. **Did NOT add metadata fields to tab.zig yet** — deferred to Phase 2/3.
 
-**Files modified:** `src/apprt/gtk/class/tab.zig`
-**Est:** ~100 lines
-
-#### 1b. Sidebar widget
-
-A new GObject widget: `CoveSidebar`.
-
-- [ ] Create `src/apprt/gtk/class/sidebar.zig` — custom GtkWidget subclass
-  - `GtkBox` (vertical) containing:
-    - Header: "New Workspace" button
-    - `GtkScrolledWindow` → `GtkListBox` (workspace rows)
-    - Footer: notification panel toggle (placeholder for Phase 2)
-  - Signals: `workspace-selected(index)`, `workspace-close-requested(index)`
-  - Properties: binds to the window's tab list
-- [ ] Create `src/apprt/gtk/ui/1.5/sidebar.blp` — Blueprint layout
-- [ ] Create `src/apprt/gtk/class/sidebar_row.zig` — individual row widget
-  - Displays: workspace title, unread badge (circle with count), active indicator (left rail)
-  - Click → select workspace
-  - Middle-click → close workspace
-  - Right-click → context menu (rename, close)
-- [ ] Register both classes in `src/apprt/gtk/class.zig`
-
-**Files created:** `sidebar.zig`, `sidebar_row.zig`, `sidebar.blp`
-**Files modified:** `class.zig` (registration)
-**Est:** ~600 lines
-
-#### 1c. Window layout swap
-
-Replace `AdwTabBar` + `AdwTabView` with `GtkPaned` + sidebar + workspace stack.
-
-**Current layout:**
-```
-AdwApplicationWindow
-└── AdwTabOverview
-    └── AdwToolbarView
-        ├── [top] AdwHeaderBar
-        ├── [top] AdwTabBar          ← REMOVE
-        └── AdwToastOverlay
-            └── AdwTabView           ← REPLACE with GtkStack
-```
-
-**Target layout:**
+**Actual layout:**
 ```
 AdwApplicationWindow
 └── GtkPaned (horizontal, position: 220px)
-    ├── [start] CoveSidebar
+    ├── [start] GtkBox .cove-sidebar
+    │   ├── GtkBox (header: "Workspaces" label + "+" button)
+    │   └── GtkScrolledWindow → GtkListBox .navigation-sidebar
     └── [end] AdwToolbarView
-        ├── [top] AdwHeaderBar (simplified — no tab buttons)
+        ├── [top] AdwHeaderBar (sidebar toggle + menu)
         └── AdwToastOverlay
-            └── GtkStack (one child per workspace)
-                └── GhosttyTab (contains SplitTree)
+            └── AdwTabView (kept! tab bar hidden)
 ```
 
-Key changes in `window.zig`:
-- [ ] Remove `AdwTabOverview`, `AdwTabBar`, `AdwTabView` fields and all tab-view signal handlers
-- [ ] Add `GtkPaned`, `CoveSidebar`, `GtkStack` fields
-- [ ] Rewrite `newTabPage()` → `newWorkspace()`: creates Tab, adds to GtkStack, adds sidebar row
-- [ ] Rewrite `gotoTab()` → `gotoWorkspace()`: sets GtkStack visible child + sidebar selection
-- [ ] Rewrite `closeTab()` → `closeWorkspace()`: removes from stack + sidebar
-- [ ] Rewrite `moveTab()` → `moveWorkspace()`: reorders in sidebar
-- [ ] Keep split management as-is (splits are *within* a workspace)
-- [ ] Update `window.blp` to match new layout
-- [ ] Wire sidebar signals to workspace operations
-- [ ] Add `Ctrl+B` keybind to toggle sidebar visibility
-- [ ] Add `Ctrl+1..9` keybinds for workspace switching
+- [x] Remove `AdwTabOverview`, `AdwTabBar` from template and Private struct
+- [x] Add `GtkPaned`, `GtkBox` (sidebar), `GtkListBox` to template and Private struct
+- [x] Sidebar rows created on `page-attached`, removed on `page-detached`
+- [x] Bidirectional sync: sidebar selection ↔ AdwTabView selected page
+- [x] Anti-reentrance guard (`updating_sidebar` flag)
+- [x] `sidebar-visible` property + `win.toggle-sidebar` action + header toggle button
+- [x] `toggleTabOverview()` redirected to `toggleSidebar()`
+- [x] Removed dead code: tab overview callbacks, tab bar properties, context menu page
+- [x] `.cove-sidebar` CSS in `style.css`
 
-**Files modified:** `window.zig` (~500 lines changed), `window.blp` (rewrite), `application.zig` (new actions)
-**Est:** ~800 lines changed
+**Commit:** `6363939c4`
+**Files modified:** `window.zig` (~85 lines net reduction), `window.blp` (rewritten), `style.css`
+**No new files created** (simpler than planned)
 
-#### 1d. Sidebar polish
+#### 1d. Sidebar polish (NOT YET DONE)
 
-- [ ] Sidebar width persisted in GSettings or config
-- [ ] Drag-to-resize via GtkPaned handle
+- [ ] Sidebar width persisted in config
+- [ ] Drag-to-resize via GtkPaned handle (already works — built into GtkPaned)
 - [ ] Keyboard navigation: Up/Down in sidebar, Enter to select
+- [ ] Middle-click sidebar row to close workspace
+- [ ] Right-click context menu on sidebar rows (rename, close)
 - [ ] Sidebar auto-hides when only 1 workspace (config option)
 - [ ] Double-click sidebar row to rename workspace
 
 **Est:** ~200 lines
-
-**Phase 1 total: ~1,700 lines | Tag: `v0.1.0-sidebar`**
 
 ---
 
@@ -421,17 +378,17 @@ read-screen ID          → {lines: [...]}
 
 ## Milestone Summary
 
-| Phase | Feature | New Lines | Cumulative | Tag |
-|-------|---------|-----------|------------|-----|
-| 0 | Repo, build, attribution | 100 | 100 | `v0.0.1-scaffold` |
-| 1 | Vertical sidebar | 1,700 | 1,800 | `v0.1.0-sidebar` |
-| 2 | Notifications | 400 | 2,200 | `v0.2.0-notifications` |
-| 3 | Workspace metadata | 600 | 2,800 | `v0.3.0-metadata` |
-| 4 | Socket API & CLI | 2,500 | 5,300 | `v0.4.0-socket-api` |
-| 5 | Browser panel | 2,000 | 7,300 | `v0.5.0-browser` |
-| 6 | Session persistence | 500 | 7,800 | `v0.6.0-sessions` |
+| Phase | Feature | Est. Lines | Status | Notes |
+|-------|---------|-----------|--------|-------|
+| 0 | Repo, build, attribution | 100 | ✅ Done | Commit `6816b450a` |
+| 1 | Vertical sidebar | 1,700 | 🟡 Core done | Commit `6363939c4`. Polish (1d) remaining. |
+| 2 | Notifications | 400 | 🔲 | |
+| 3 | Workspace metadata | 600 | 🔲 | |
+| 4 | Socket API & CLI | 2,500 | 🔲 | |
+| 5 | Browser panel | 2,000 | 🔲 | |
+| 6 | Session persistence | 500 | 🔲 | |
 
-**Total: ~7,800 lines of new/modified Zig** (cmux macOS is ~36K lines of Swift for the same features, but we inherit the terminal engine, splits, search, rendering, input, and Wayland/X11 from Ghostty).
+**Note:** Cannot use `vX.Y.Z` tags — Ghostty's build system panics on non-matching semver tags. Use `cove-*` prefixed tags if needed.
 
 ---
 
@@ -444,36 +401,47 @@ read-screen ID          → {lines: [...]}
 | WebKitGTK 6.0 not available on all distros | Low — Phase 5 only | Make browser panel a compile-time optional feature (`-Dbrowser=true`). |
 | GCC/Zig SFrame linker issue persists | Low — build only | `build.sh` workaround is stable. Track upstream Zig for proper fix. |
 | Ghostty adds their own sidebar/workspace feature | Low probability, high impact | Monitor upstream. If it happens, evaluate adopting their implementation vs. keeping ours. |
+| Ghostty build system rejects our git tags | Low — build only | **Already hit:** `vX.Y.Z` tags cause `GitVersion.zig` to panic. Never use `v`-prefixed semver tags for Cove. Use `cove-*` prefix or no tags. |
 
 ---
 
 ## File Impact Map
 
-Files we **create** (no rebase conflicts):
+Files we **created** (no rebase conflicts):
 ```
-README.md                                (Phase 0)
-THIRD_PARTY_LICENSES.md                  (Phase 0)
-build.sh                                 (Phase 0)
-docs/plan.md                             (Phase 0)
-src/apprt/gtk/class/sidebar.zig          (Phase 1)
-src/apprt/gtk/class/sidebar_row.zig      (Phase 1)
-src/apprt/gtk/ui/1.5/sidebar.blp         (Phase 1)
-src/apprt/gtk/class/notification_store.zig (Phase 2)
-src/apprt/gtk/class/socket_server.zig    (Phase 4)
-src/apprt/gtk/class/browser_panel.zig    (Phase 5)
-src/apprt/gtk/class/session_persistence.zig (Phase 6)
+README.md                                  (Phase 0) ✅
+THIRD_PARTY_LICENSES.md                    (Phase 0) ✅
+build.sh                                   (Phase 0) ✅
+docs/plan.md                               (Phase 0) ✅
+docs/progress.md                           (Phase 0) ✅
+docs/spike-strategy1-gtk4-rewrite.md       (Phase 0) ✅
+docs/spike-strategy2-ghostty-fork.md       (Phase 0) ✅
+src/apprt/gtk/class/notification_store.zig (Phase 2) 🔲
+src/apprt/gtk/class/socket_server.zig      (Phase 4) 🔲
+src/apprt/gtk/class/browser_panel.zig      (Phase 5) 🔲
+src/apprt/gtk/class/session_persistence.zig (Phase 6) 🔲
 ```
 
-Files we **modify** (potential rebase conflicts):
+**Note:** Separate `sidebar.zig`/`sidebar_row.zig` files were NOT needed — sidebar is built directly in `window.blp` + `window.zig`.
+
+Files we **modified** (potential rebase conflicts):
 ```
-src/apprt/gtk/class/window.zig           (Phase 1 — heavy)
-src/apprt/gtk/ui/1.5/window.blp          (Phase 1 — rewrite)
-src/apprt/gtk/class/application.zig      (Phase 1–4 — medium)
-src/apprt/gtk/class/tab.zig              (Phase 1, 3 — light)
-src/apprt/gtk/class.zig                  (Phase 1 — registration)
-src/apprt/gtk/class/split_tree.zig       (Phase 5 — maybe)
-src/build/SharedDeps.zig                 (Phase 5 — add webkit dep)
-src/build/GhosttyExe.zig                (Phase 0 — binary name)
+src/build/GhosttyExe.zig                (Phase 0 — binary name) ✅
+src/apprt/gtk/App.zig                   (Phase 0 — app ID) ✅
+src/apprt/gtk/build/gresource.zig       (Phase 0 — resource prefix) ✅
+src/apprt/gtk/class/application.zig     (Phase 0 — resource path, notifications) ✅
+src/apprt/gtk/class/surface.zig         (Phase 0 — notification icon) ✅
+src/apprt/gtk/class/window.zig          (Phase 0, 1 — about dialog + sidebar, heavy) ✅
+src/apprt/gtk/ui/1.5/window.blp         (Phase 1 — full layout rewrite) ✅
+src/apprt/gtk/css/style.css             (Phase 1 — sidebar CSS) ✅
+src/apprt/gtk/ipc/new_window.zig        (Phase 0 — comment updates) ✅
+src/apprt/gtk/winproto/x11.zig          (Phase 0 — WM_CLASS comment) ✅
+src/apprt/gtk/ui/1.5/inspector-window.blp (Phase 0 — title, icon) ✅
+src/apprt/gtk/ui/1.2/debug-warning.blp  (Phase 0 — debug text) ✅
+src/apprt/gtk/ui/1.3/debug-warning.blp  (Phase 0 — debug text) ✅
+src/apprt/gtk/class/tab.zig             (Phase 3 — metadata fields) 🔲
+src/apprt/gtk/class/split_tree.zig      (Phase 5 — maybe browser leaves) 🔲
+src/build/SharedDeps.zig                (Phase 5 — add webkit dep) 🔲
 ```
 
 Files we **never touch** (zero conflict risk):

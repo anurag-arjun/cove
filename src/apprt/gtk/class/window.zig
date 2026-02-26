@@ -150,47 +150,20 @@ pub const Window = extern struct {
             );
         };
 
-        pub const @"tabs-autohide" = struct {
-            pub const name = "tabs-autohide";
+        pub const @"sidebar-visible" = struct {
+            pub const name = "sidebar-visible";
             const impl = gobject.ext.defineProperty(
                 name,
                 Self,
                 bool,
                 .{
                     .default = true,
-                    .accessor = gobject.ext.typedAccessor(Self, bool, .{
-                        .getter = Self.getTabsAutohide,
-                    }),
-                },
-            );
-        };
-
-        pub const @"tabs-wide" = struct {
-            pub const name = "tabs-wide";
-            const impl = gobject.ext.defineProperty(
-                name,
-                Self,
-                bool,
-                .{
-                    .default = true,
-                    .accessor = gobject.ext.typedAccessor(Self, bool, .{
-                        .getter = Self.getTabsWide,
-                    }),
-                },
-            );
-        };
-
-        pub const @"tabs-visible" = struct {
-            pub const name = "tabs-visible";
-            const impl = gobject.ext.defineProperty(
-                name,
-                Self,
-                bool,
-                .{
-                    .default = true,
-                    .accessor = gobject.ext.typedAccessor(Self, bool, .{
-                        .getter = Self.getTabsVisible,
-                    }),
+                    .accessor = gobject.ext.privateFieldAccessor(
+                        Self,
+                        Private,
+                        &Private.offset,
+                        "sidebar_visible",
+                    ),
                 },
             );
         };
@@ -246,19 +219,20 @@ pub const Window = extern struct {
         /// For now, this logic is more similar to our legacy GTK side.
         surface_init: bool = false,
 
-        /// See tabOverviewOpen for why we have this.
-        tab_overview_focus_timer: ?c_uint = null,
-
         /// A weak reference to a command palette.
         command_palette: WeakRef(CommandPalette) = .empty,
 
-        /// Tab page that the context menu was opened for.
-        /// setup by `setup-menu`.
-        context_menu_page: ?*adw.TabPage = null,
+        /// Whether the sidebar is currently visible.
+        sidebar_visible: bool = true,
+
+        /// Whether we're currently updating the sidebar selection
+        /// programmatically (to avoid re-entrant signals).
+        updating_sidebar: bool = false,
 
         // Template bindings
-        tab_overview: *adw.TabOverview,
-        tab_bar: *adw.TabBar,
+        cove_paned: *gtk.Paned,
+        sidebar_box: *gtk.Box,
+        sidebar_list: *gtk.ListBox,
         tab_view: *adw.TabView,
         toolbar: *adw.ToolbarView,
         toast_overlay: *adw.ToastOverlay,
@@ -341,7 +315,6 @@ pub const Window = extern struct {
             .init("new-window", actionNewWindow, null),
             .init("prompt-surface-title", actionPromptSurfaceTitle, null),
             .init("prompt-tab-title", actionPromptTabTitle, null),
-            .init("prompt-context-tab-title", actionPromptContextTabTitle, null),
             .init("ring-bell", actionRingBell, null),
             .init("split-right", actionSplitRight, null),
             .init("split-left", actionSplitLeft, null),
@@ -354,6 +327,7 @@ pub const Window = extern struct {
             // TODO: accept the surface that toggled the command palette
             .init("toggle-command-palette", actionToggleCommandPalette, null),
             .init("toggle-inspector", actionToggleInspector, null),
+            .init("toggle-sidebar", actionToggleSidebar, null),
         };
 
         ext.actions.add(Self, self, &actions);
@@ -446,6 +420,89 @@ pub const Window = extern struct {
         );
 
         return page;
+    }
+
+    /// Create a sidebar row for the given tab page and insert it at the
+    /// correct position.
+    fn sidebarAddRow(self: *Self, page: *adw.TabPage, position: c_int) void {
+        const priv = self.private();
+
+        // Create the row content
+        const label = gtk.Label.new("Workspace");
+        label.setXalign(0);
+        label.setEllipsize(.end);
+        label.as(gtk.Widget).setHexpand(@intFromBool(true));
+
+        // Bind the page title to the label
+        _ = page.as(gobject.Object).bindProperty(
+            "title",
+            label.as(gobject.Object),
+            "label",
+            .{ .sync_create = true },
+        );
+
+        // Insert the row
+        const list = priv.sidebar_list;
+        const row_widget = label.as(gtk.Widget);
+        list.insert(row_widget, position);
+
+        // Store a reference to the page on the row for lookup
+        const row = list.getRowAtIndex(position) orelse return;
+        row.as(gobject.Object).setData(
+            "cove-tab-page",
+            page,
+        );
+    }
+
+    /// Get the tab page associated with a sidebar row via stored data.
+    fn sidebarRowGetPage(row: *gtk.ListBoxRow) ?*adw.TabPage {
+        const data = row.as(gobject.Object).getData("cove-tab-page") orelse return null;
+        return @ptrCast(@alignCast(data));
+    }
+
+    /// Remove the sidebar row corresponding to the given tab page.
+    fn sidebarRemoveRow(self: *Self, page: *adw.TabPage) void {
+        const priv = self.private();
+        const list = priv.sidebar_list;
+
+        // Find the row matching this page
+        var i: c_int = 0;
+        while (true) {
+            const row = list.getRowAtIndex(i) orelse break;
+            const stored_page = sidebarRowGetPage(row) orelse {
+                i += 1;
+                continue;
+            };
+            if (stored_page == page) {
+                list.remove(row.as(gtk.Widget));
+                return;
+            }
+            i += 1;
+        }
+    }
+
+    /// Sync the sidebar selection to match the currently selected tab page.
+    fn sidebarSyncSelection(self: *Self) void {
+        const priv = self.private();
+        const selected_page = priv.tab_view.getSelectedPage() orelse return;
+        const list = priv.sidebar_list;
+
+        priv.updating_sidebar = true;
+        defer priv.updating_sidebar = false;
+
+        var i: c_int = 0;
+        while (true) {
+            const row = list.getRowAtIndex(i) orelse break;
+            const stored_page = sidebarRowGetPage(row) orelse {
+                i += 1;
+                continue;
+            };
+            if (stored_page == selected_page) {
+                list.selectRow(row);
+                return;
+            }
+            i += 1;
+        }
     }
 
     pub const SelectTab = union(enum) {
@@ -547,10 +604,15 @@ pub const Window = extern struct {
     }
 
     pub fn toggleTabOverview(self: *Self) void {
+        // Tab overview removed in Cove — toggle sidebar instead.
+        self.toggleSidebar();
+    }
+
+    /// Toggle the sidebar visibility.
+    pub fn toggleSidebar(self: *Self) void {
         const priv = self.private();
-        const tab_overview = priv.tab_overview;
-        const is_open = tab_overview.getOpen() != 0;
-        tab_overview.setOpen(@intFromBool(!is_open));
+        priv.sidebar_visible = !priv.sidebar_visible;
+        self.as(gobject.Object).notifyByPspec(properties.@"sidebar-visible".impl.param_spec);
     }
 
     /// Toggle the visible property.
@@ -609,9 +671,7 @@ pub const Window = extern struct {
         // Trigger all our dynamic properties that depend on the config.
         inline for (&.{
             "headerbar-visible",
-            "tabs-autohide",
-            "tabs-visible",
-            "tabs-wide",
+            "sidebar-visible",
             "toolbar-style",
             "titlebar-style",
         }) |key| {
@@ -637,13 +697,6 @@ pub const Window = extern struct {
             !gtk_version.atLeast(4, 16, 0) and
                 config.@"window-theme" == .ghostty,
         );
-
-        // Move the tab bar to the proper location.
-        priv.toolbar.remove(priv.tab_bar.as(gtk.Widget));
-        switch (config.@"gtk-tabs-location") {
-            .top => priv.toolbar.addTopBar(priv.tab_bar.as(gtk.Widget)),
-            .bottom => priv.toolbar.addBottomBar(priv.tab_bar.as(gtk.Widget)),
-        }
 
         // Do our window-protocol specific appearance sync.
         priv.winproto.syncAppearance() catch |err| {
@@ -934,56 +987,6 @@ pub const Window = extern struct {
         };
     }
 
-    fn getTabsAutohide(self: *Self) bool {
-        const priv = self.private();
-        const config = if (priv.config) |v| v.get() else return true;
-
-        return switch (config.@"gtk-titlebar-style") {
-            // If the titlebar style is tabs we cannot autohide.
-            .tabs => false,
-
-            .native => switch (config.@"window-show-tab-bar") {
-                // Auto we always autohide... obviously.
-                .auto => true,
-
-                // Always we never autohide because we always show the tab bar.
-                .always => false,
-
-                // Never we autohide because it doesn't actually matter,
-                // since getTabsVisible will return false.
-                .never => true,
-            },
-        };
-    }
-
-    fn getTabsVisible(self: *Self) bool {
-        const priv = self.private();
-        const config = if (priv.config) |v| v.get() else return true;
-
-        switch (config.@"gtk-titlebar-style") {
-            .tabs => {
-                // *Conditionally* disable the tab bar when maximized, the titlebar
-                // style is tabs, and gtk-titlebar-hide-when-maximized is set.
-                if (self.isMaximized() and config.@"gtk-titlebar-hide-when-maximized") return false;
-
-                // If the titlebar style is tabs the tab bar must always be visible.
-                return true;
-            },
-            .native => {
-                return switch (config.@"window-show-tab-bar") {
-                    .always, .auto => true,
-                    .never => false,
-                };
-            },
-        }
-    }
-
-    fn getTabsWide(self: *Self) bool {
-        const priv = self.private();
-        const config = if (priv.config) |v| v.get() else return true;
-        return config.@"gtk-wide-tabs";
-    }
-
     fn getToolbarStyle(self: *Self) adw.ToolbarStyle {
         const priv = self.private();
         const config = if (priv.config) |v| v.get() else return .raised;
@@ -1141,16 +1144,6 @@ pub const Window = extern struct {
         };
     }
 
-    fn closureTitlebarStyleIsTab(
-        _: *Self,
-        value: TitlebarStyle,
-    ) callconv(.c) c_int {
-        return @intFromBool(switch (value) {
-            .native => false,
-            .tabs => true,
-        });
-    }
-
     fn closureSubtitle(
         _: *Self,
         config_: ?*Config,
@@ -1247,62 +1240,6 @@ pub const Window = extern struct {
 
     fn btnNewTab(_: *adw.SplitButton, self: *Self) callconv(.c) void {
         self.performBindingAction(.new_tab);
-    }
-
-    fn tabOverviewCreateTab(
-        _: *adw.TabOverview,
-        self: *Self,
-    ) callconv(.c) *adw.TabPage {
-        return self.newTabPage(if (self.getActiveSurface()) |v| v.core() else null, .tab);
-    }
-
-    fn tabOverviewOpen(
-        tab_overview: *adw.TabOverview,
-        _: *gobject.ParamSpec,
-        self: *Self,
-    ) callconv(.c) void {
-        // We only care about when the tab overview is closed.
-        if (tab_overview.getOpen() != 0) return;
-
-        // On tab overview close, focus is sometimes lost. This is an
-        // upstream issue in libadwaita[1]. When this is resolved we
-        // can put a runtime version check here to avoid this workaround.
-        //
-        // Our workaround is to start a timer after 500ms to refocus
-        // the currently selected tab. We choose 500ms because the adw
-        // animation is 400ms.
-        //
-        // [1]: https://gitlab.gnome.org/GNOME/libadwaita/-/issues/670
-
-        // If we have an old timer remove it
-        const priv = self.private();
-        if (priv.tab_overview_focus_timer) |timer| {
-            _ = glib.Source.remove(timer);
-        }
-
-        // Restart our timer
-        priv.tab_overview_focus_timer = glib.timeoutAdd(
-            500,
-            tabOverviewFocusTimer,
-            self,
-        );
-    }
-
-    fn tabOverviewFocusTimer(
-        ud: ?*anyopaque,
-    ) callconv(.c) c_int {
-        const self: *Self = @ptrCast(@alignCast(ud orelse return 0));
-
-        // Always note our timer is removed
-        self.private().tab_overview_focus_timer = null;
-
-        // Get our currently active surface which should respect the newly
-        // selected tab. Grab focus.
-        const surface = self.getActiveSurface() orelse return 0;
-        surface.grabFocus();
-
-        // Remove the timer
-        return 0;
     }
 
     fn windowCloseRequest(
@@ -1425,12 +1362,15 @@ pub const Window = extern struct {
         // If the tab was previously marked as needing attention
         // (e.g. due to a bell character), we now unmark that
         page.setNeedsAttention(@intFromBool(false));
+
+        // Sync sidebar selection
+        self.sidebarSyncSelection();
     }
 
     fn tabViewPageAttached(
         _: *adw.TabView,
         page: *adw.TabPage,
-        _: c_int,
+        position: c_int,
         self: *Self,
     ) callconv(.c) void {
         // Get the attached page which must be a Tab object.
@@ -1447,27 +1387,12 @@ pub const Window = extern struct {
         );
 
         // Attach listeners for the surface.
-        //
-        // Interesting behavior here that was previously undocumented but
-        // I'm going to make it explicit here: we accept all the signals here
-        // (like toggle-fullscreen) regardless of whether the surface or tab
-        // is focused. At the time of writing this we have no API that could
-        // really trigger these that way but its theoretically possible.
-        //
-        // What is DEFINITELY possible is something like OSC52 triggering
-        // a clipboard-write signal on an unfocused tab/surface. We definitely
-        // want to show the user a notification about that but our notification
-        // right now is a toast that doesn't make it clear WHO used the
-        // clipboard. We probably want to change that in the future.
-        //
-        // I'm not sure how desirable all the above is, and we probably
-        // should be thoughtful about future signals here. But all of this
-        // behavior is consistent with macOS and the previous GTK apprt,
-        // but that behavior was all implicit and not documented, so here
-        // I am.
         if (tab.getSurfaceTree()) |tree| {
             self.connectSurfaceHandlers(tree);
         }
+
+        // Add a sidebar row for this page
+        self.sidebarAddRow(page, position);
     }
 
     fn tabViewPageDetached(
@@ -1493,6 +1418,9 @@ pub const Window = extern struct {
         if (tab.getSurfaceTree()) |tree| {
             self.disconnectSurfaceHandlers(tree);
         }
+
+        // Remove the sidebar row for this page
+        self.sidebarRemoveRow(page);
     }
 
     fn tabViewCreateWindow(
@@ -1531,23 +1459,8 @@ pub const Window = extern struct {
     ) callconv(.c) void {
         const priv = self.private();
         if (priv.tab_view.getNPages() == 0) {
-            // If we have no pages left then we want to close window.
-
-            // If the tab overview is open, then we don't close the window
-            // because its a rather abrupt experience. This also fixes an
-            // issue where dragging out the last tab in the tab overview
-            // won't cause Ghostty to exit.
-            if (priv.tab_overview.getOpen() != 0) return;
-
             self.as(gtk.Window).close();
         }
-    }
-    fn setupTabMenu(
-        _: *adw.TabView,
-        page: ?*adw.TabPage,
-        self: *Self,
-    ) callconv(.c) void {
-        self.private().context_menu_page = page;
     }
 
     fn surfaceClipboardWrite(
@@ -1792,18 +1705,6 @@ pub const Window = extern struct {
         self.performBindingAction(.new_tab);
     }
 
-    fn actionPromptContextTabTitle(
-        _: *gio.SimpleAction,
-        _: ?*glib.Variant,
-        self: *Self,
-    ) callconv(.c) void {
-        const priv = self.private();
-        const page = priv.context_menu_page orelse return;
-        const child = page.getChild();
-        const tab = gobject.ext.cast(Tab, child) orelse return;
-        tab.promptTabTitle();
-    }
-
     fn actionPromptSurfaceTitle(
         _: *gio.SimpleAction,
         _: ?*glib.Variant,
@@ -1985,9 +1886,37 @@ pub const Window = extern struct {
         _: ?*glib.Variant,
         self: *Window,
     ) callconv(.c) void {
-        // TODO: accept the surface that toggled the command palette as a
-        // parameter
         self.toggleInspector();
+    }
+
+    fn actionToggleSidebar(
+        _: *gio.SimpleAction,
+        _: ?*glib.Variant,
+        self: *Window,
+    ) callconv(.c) void {
+        self.toggleSidebar();
+    }
+
+    /// Sidebar row activated — select the corresponding tab page.
+    fn sidebarRowActivated(
+        _: *gtk.ListBox,
+        row: *gtk.ListBoxRow,
+        self: *Self,
+    ) callconv(.c) void {
+        const priv = self.private();
+
+        // Avoid re-entrant selection changes
+        if (priv.updating_sidebar) return;
+
+        // Get the page stored on this row
+        const page = sidebarRowGetPage(row) orelse return;
+
+        priv.tab_view.setSelectedPage(page);
+
+        // Focus the terminal surface
+        if (self.getActiveSurface()) |surface| {
+            surface.grabFocus();
+        }
     }
 
     const C = Common(Self, Private);
@@ -2022,16 +1951,15 @@ pub const Window = extern struct {
                 properties.debug.impl,
                 properties.@"headerbar-visible".impl,
                 properties.@"quick-terminal".impl,
-                properties.@"tabs-autohide".impl,
-                properties.@"tabs-visible".impl,
-                properties.@"tabs-wide".impl,
+                properties.@"sidebar-visible".impl,
                 properties.@"toolbar-style".impl,
                 properties.@"titlebar-style".impl,
             });
 
             // Bindings
-            class.bindTemplateChildPrivate("tab_overview", .{});
-            class.bindTemplateChildPrivate("tab_bar", .{});
+            class.bindTemplateChildPrivate("cove_paned", .{});
+            class.bindTemplateChildPrivate("sidebar_box", .{});
+            class.bindTemplateChildPrivate("sidebar_list", .{});
             class.bindTemplateChildPrivate("tab_view", .{});
             class.bindTemplateChildPrivate("toolbar", .{});
             class.bindTemplateChildPrivate("toast_overlay", .{});
@@ -2039,13 +1967,10 @@ pub const Window = extern struct {
             // Template Callbacks
             class.bindTemplateCallback("realize", &windowRealize);
             class.bindTemplateCallback("new_tab", &btnNewTab);
-            class.bindTemplateCallback("overview_create_tab", &tabOverviewCreateTab);
-            class.bindTemplateCallback("overview_notify_open", &tabOverviewOpen);
             class.bindTemplateCallback("close_request", &windowCloseRequest);
             class.bindTemplateCallback("close_page", &tabViewClosePage);
             class.bindTemplateCallback("page_attached", &tabViewPageAttached);
             class.bindTemplateCallback("page_detached", &tabViewPageDetached);
-            class.bindTemplateCallback("setup_tab_menu", &setupTabMenu);
             class.bindTemplateCallback("tab_create_window", &tabViewCreateWindow);
             class.bindTemplateCallback("notify_n_pages", &tabViewNPages);
             class.bindTemplateCallback("notify_selected_page", &tabViewSelectedPage);
@@ -2056,7 +1981,7 @@ pub const Window = extern struct {
             class.bindTemplateCallback("notify_menu_active", &propMenuActive);
             class.bindTemplateCallback("notify_quick_terminal", &propQuickTerminal);
             class.bindTemplateCallback("notify_scale_factor", &propScaleFactor);
-            class.bindTemplateCallback("titlebar_style_is_tabs", &closureTitlebarStyleIsTab);
+            class.bindTemplateCallback("sidebar_row_activated", &sidebarRowActivated);
             class.bindTemplateCallback("computed_subtitle", &closureSubtitle);
 
             // Virtual methods

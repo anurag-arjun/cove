@@ -20,17 +20,69 @@ template $GhosttyWindow: Adw.ApplicationWindow {
   // to disable this so that terminal programs can capture F10 (such as htop)
   handle-menubar-accel: false;
 
-  content: Adw.TabOverview tab_overview {
-    create-tab => $overview_create_tab();
-    notify::open => $overview_notify_open();
-    view: tab_view;
-    enable-new-tab: true;
-    // Disable the title buttons (close, maximize, minimize, ...)
-    // *inside* the tab overview if CSDs are disabled.
-    // We do spare the search button, though.
-    show-start-title-buttons: bind template.decorated;
-    show-end-title-buttons: bind template.decorated;
+  content: Gtk.Paned cove_paned {
+    orientation: horizontal;
+    position: 220;
+    shrink-start-child: false;
+    shrink-end-child: false;
+    resize-start-child: false;
+    resize-end-child: true;
 
+    [start]
+    Gtk.Box sidebar_box {
+      orientation: vertical;
+      width-request: 150;
+      visible: bind template.sidebar-visible;
+
+      styles [
+        "cove-sidebar",
+      ]
+
+      Gtk.Box {
+        orientation: horizontal;
+        margin-start: 8;
+        margin-end: 8;
+        margin-top: 8;
+        margin-bottom: 4;
+
+        Gtk.Label {
+          label: _("Workspaces");
+          hexpand: true;
+          xalign: 0;
+
+          styles [
+            "heading",
+          ]
+        }
+
+        Gtk.Button {
+          action-name: "win.new-tab";
+          icon-name: "list-add-symbolic";
+          tooltip-text: _("New Workspace");
+
+          styles [
+            "flat",
+            "circular",
+          ]
+        }
+      }
+
+      Gtk.ScrolledWindow {
+        vexpand: true;
+        hscrollbar-policy: never;
+
+        Gtk.ListBox sidebar_list {
+          selection-mode: browse;
+          row-activated => $sidebar_row_activated();
+
+          styles [
+            "navigation-sidebar",
+          ]
+        }
+      }
+    }
+
+    [end]
     Adw.ToolbarView toolbar {
       top-bar-style: bind template.toolbar-style;
       bottom-bar-style: bind template.toolbar-style;
@@ -41,12 +93,6 @@ template $GhosttyWindow: Adw.ApplicationWindow {
 
         title-widget: Adw.WindowTitle {
           title: bind template.title;
-          // Blueprint auto-formatter won't let me split this into multiple
-          // lines. Let me explain myself. All parameters to a closure are used
-          // as notifications to recompute the value of the closure. All
-          // elements of a property chain are also subscribed to for changes.
-          // This one long, ugly line saves us from manually building up this
-          // massive notify chain in code.
           subtitle: bind $computed_subtitle(template.config, tab_view.selected-page.child as <$GhosttyTab>.active-surface as <$GhosttySurface>.pwd) as <string>;
         };
 
@@ -54,7 +100,7 @@ template $GhosttyWindow: Adw.ApplicationWindow {
         Adw.SplitButton {
           clicked => $new_tab();
           icon-name: "tab-new-symbolic";
-          tooltip-text: _("New Tab");
+          tooltip-text: _("New Workspace");
           dropdown-tooltip: _("New Split");
           menu-model: split_menu;
           can-focus: false;
@@ -63,10 +109,10 @@ template $GhosttyWindow: Adw.ApplicationWindow {
 
         [end]
         Gtk.Box {
-          Gtk.ToggleButton {
-            icon-name: "view-grid-symbolic";
-            tooltip-text: _("View Open Tabs");
-            active: bind tab_overview.open bidirectional;
+          Gtk.ToggleButton sidebar_toggle {
+            icon-name: "sidebar-show-symbolic";
+            tooltip-text: _("Toggle Sidebar");
+            active: bind template.sidebar-visible bidirectional;
             can-focus: false;
             focus-on-click: false;
           }
@@ -77,72 +123,6 @@ template $GhosttyWindow: Adw.ApplicationWindow {
             menu-model: main_menu;
             tooltip-text: _("Main Menu");
             can-focus: false;
-          }
-        }
-      }
-
-      [top]
-      Adw.TabBar tab_bar {
-        autohide: bind template.tabs-autohide;
-        expand-tabs: bind template.tabs-wide;
-        view: tab_view;
-        visible: bind template.tabs-visible;
-
-        [start]
-        Gtk.Box {
-          orientation: horizontal;
-          visible: bind $titlebar_style_is_tabs(template.titlebar-style) as <bool>;
-
-          Gtk.WindowControls {
-            side: start;
-          }
-
-          Adw.SplitButton {
-            styles [
-              "flat",
-            ]
-
-            clicked => $new_tab();
-            icon-name: "tab-new-symbolic";
-            tooltip-text: _("New Tab");
-            dropdown-tooltip: _("New Split");
-            menu-model: split_menu;
-            can-focus: false;
-            focus-on-click: false;
-          }
-        }
-
-        [end]
-        Gtk.Box {
-          orientation: horizontal;
-          visible: bind $titlebar_style_is_tabs(template.titlebar-style) as <bool>;
-
-          Gtk.ToggleButton {
-            styles [
-              "flat",
-            ]
-
-            icon-name: "view-grid-symbolic";
-            tooltip-text: _("View Open Tabs");
-            active: bind tab_overview.open bidirectional;
-            can-focus: false;
-            focus-on-click: false;
-          }
-
-          Gtk.MenuButton {
-            styles [
-              "flat",
-            ]
-
-            notify::active => $notify_menu_active();
-            icon-name: "open-menu-symbolic";
-            menu-model: main_menu;
-            tooltip-text: _("Main Menu");
-            can-focus: false;
-          }
-
-          Gtk.WindowControls {
-            side: end;
           }
         }
       }
@@ -162,8 +142,6 @@ template $GhosttyWindow: Adw.ApplicationWindow {
             page-attached => $page_attached();
             page-detached => $page_detached();
             create-window => $tab_create_window();
-            setup-menu => $setup_tab_menu();
-            menu-model: tab_context_menu;
             shortcuts: none;
           }
         }
@@ -221,17 +199,17 @@ menu main_menu {
 
   section {
     item {
-      label: _("Change Tab Title…");
+      label: _("Change Workspace Title…");
       action: "win.prompt-tab-title";
     }
 
     item {
-      label: _("New Tab");
+      label: _("New Workspace");
       action: "win.new-tab";
     }
 
     item {
-      label: _("Close Tab");
+      label: _("Close Workspace");
       action: "win.close-tab";
       target: "this";
     }
@@ -304,6 +282,11 @@ menu main_menu {
 
   section {
     item {
+      label: _("Toggle Sidebar");
+      action: "win.toggle-sidebar";
+    }
+
+    item {
       label: _("About Cove");
       action: "win.about";
     }
@@ -312,12 +295,5 @@ menu main_menu {
       label: _("Quit");
       action: "app.quit";
     }
-  }
-}
-
-menu tab_context_menu {
-  item {
-    label: _("Change Tab Title…");
-    action: "win.prompt-context-tab-title";
   }
 }

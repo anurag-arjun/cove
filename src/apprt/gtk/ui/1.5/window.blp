@@ -141,6 +141,7 @@ template $GhosttyWindow: Adw.ApplicationWindow {
             close-page => $close_page();
             page-attached => $page_attached();
             page-detached => $page_detached();
+            page-reordered => $page_reordered();
             create-window => $tab_create_window();
             shortcuts: none;
           }

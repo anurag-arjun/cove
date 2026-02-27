@@ -499,6 +499,12 @@ pub const Window = extern struct {
         right_click.as(gtk.GestureSingle).setButton(3);
         _ = gtk.GestureClick.signals.released.connect(right_click, *Self, &sidebarRightClick, self, .{});
         row.as(gtk.Widget).addController(right_click.as(gtk.EventController));
+
+        // Double-click to rename workspace
+        const dbl_click = gtk.GestureClick.new();
+        dbl_click.as(gtk.GestureSingle).setButton(1);
+        _ = gtk.GestureClick.signals.released.connect(dbl_click, *Self, &sidebarDoubleClick, self, .{});
+        row.as(gtk.Widget).addController(dbl_click.as(gtk.EventController));
     }
 
     /// Get the tab page associated with a sidebar row via stored data.
@@ -1470,6 +1476,37 @@ pub const Window = extern struct {
         self.sidebarRemoveRow(page);
     }
 
+    fn tabViewPageReordered(
+        _: *adw.TabView,
+        _: *adw.TabPage,
+        _: c_int,
+        self: *Self,
+    ) callconv(.c) void {
+        self.sidebarRebuild();
+    }
+
+    /// Remove all sidebar rows and recreate them from the AdwTabView page list.
+    fn sidebarRebuild(self: *Self) void {
+        const priv = self.private();
+        const list = priv.sidebar_list;
+
+        // Remove all existing rows
+        while (list.getRowAtIndex(0)) |row| {
+            list.remove(row.as(gtk.Widget));
+        }
+
+        // Recreate rows in tab_view order
+        const n = priv.tab_view.getNPages();
+        var i: c_int = 0;
+        while (i < n) : (i += 1) {
+            const page = priv.tab_view.getNthPage(i);
+            self.sidebarAddRow(page, i);
+        }
+
+        // Sync selection
+        self.sidebarSyncSelection();
+    }
+
     fn tabViewCreateWindow(
         _: *adw.TabView,
         _: *Self,
@@ -2009,6 +2046,21 @@ pub const Window = extern struct {
         self.private().tab_view.closePage(page);
     }
 
+    /// Double-click on a sidebar row — rename workspace.
+    fn sidebarDoubleClick(
+        gesture: *gtk.GestureClick,
+        n_press: c_int,
+        _: f64,
+        _: f64,
+        self: *Self,
+    ) callconv(.c) void {
+        if (n_press != 2) return;
+        const row = sidebarRowFromController(gesture.as(gtk.EventController)) orelse return;
+        const page = sidebarRowGetPage(row) orelse return;
+        self.private().tab_view.setSelectedPage(page);
+        self.performBindingAction(.prompt_tab_title);
+    }
+
     /// Right-click on a sidebar row — show context menu.
     fn sidebarRightClick(
         gesture: *gtk.GestureClick,
@@ -2055,6 +2107,35 @@ pub const Window = extern struct {
         _ = gtk.Button.signals.clicked.connect(rename_btn, *Self, &sidebarContextRename, self, .{});
         vbox.append(rename_btn.as(gtk.Widget));
 
+        // Separator
+        const sep1 = gtk.Separator.new(.horizontal);
+        vbox.append(sep1.as(gtk.Widget));
+
+        // Move Up button
+        const pos = priv.tab_view.getPagePosition(page);
+        const n_pages = priv.tab_view.getNPages();
+
+        const move_up_btn = gtk.Button.newWithLabel("Move Up");
+        move_up_btn.as(gtk.Widget).addCssClass("flat");
+        move_up_btn.setHasFrame(@intFromBool(false));
+        move_up_btn.as(gobject.Object).setData("cove-popover", popover);
+        if (pos <= 0) move_up_btn.as(gtk.Widget).setSensitive(@intFromBool(false));
+        _ = gtk.Button.signals.clicked.connect(move_up_btn, *Self, &sidebarContextMoveUp, self, .{});
+        vbox.append(move_up_btn.as(gtk.Widget));
+
+        // Move Down button
+        const move_down_btn = gtk.Button.newWithLabel("Move Down");
+        move_down_btn.as(gtk.Widget).addCssClass("flat");
+        move_down_btn.setHasFrame(@intFromBool(false));
+        move_down_btn.as(gobject.Object).setData("cove-popover", popover);
+        if (pos >= n_pages - 1) move_down_btn.as(gtk.Widget).setSensitive(@intFromBool(false));
+        _ = gtk.Button.signals.clicked.connect(move_down_btn, *Self, &sidebarContextMoveDown, self, .{});
+        vbox.append(move_down_btn.as(gtk.Widget));
+
+        // Separator
+        const sep2 = gtk.Separator.new(.horizontal);
+        vbox.append(sep2.as(gtk.Widget));
+
         // Close button
         const close_btn = gtk.Button.newWithLabel("Close Workspace");
         close_btn.as(gtk.Widget).addCssClass("flat");
@@ -2095,6 +2176,40 @@ pub const Window = extern struct {
             popover.popdown();
         }
         self.performBindingAction(.{ .close_tab = .this });
+    }
+
+    /// Context menu: Move workspace up.
+    fn sidebarContextMoveUp(
+        btn: *gtk.Button,
+        self: *Self,
+    ) callconv(.c) void {
+        if (btn.as(gobject.Object).getData("cove-popover")) |data| {
+            const popover: *gtk.Popover = @ptrCast(@alignCast(data));
+            popover.popdown();
+        }
+        const priv = self.private();
+        const page = priv.tab_view.getSelectedPage() orelse return;
+        const pos = priv.tab_view.getPagePosition(page);
+        if (pos > 0) {
+            _ = priv.tab_view.reorderPage(page, pos - 1);
+        }
+    }
+
+    /// Context menu: Move workspace down.
+    fn sidebarContextMoveDown(
+        btn: *gtk.Button,
+        self: *Self,
+    ) callconv(.c) void {
+        if (btn.as(gobject.Object).getData("cove-popover")) |data| {
+            const popover: *gtk.Popover = @ptrCast(@alignCast(data));
+            popover.popdown();
+        }
+        const priv = self.private();
+        const page = priv.tab_view.getSelectedPage() orelse return;
+        const pos = priv.tab_view.getPagePosition(page);
+        if (pos < priv.tab_view.getNPages() - 1) {
+            _ = priv.tab_view.reorderPage(page, pos + 1);
+        }
     }
 
     /// Clean up a sidebar context menu popover after it closes.
@@ -2183,6 +2298,7 @@ pub const Window = extern struct {
             class.bindTemplateCallback("close_page", &tabViewClosePage);
             class.bindTemplateCallback("page_attached", &tabViewPageAttached);
             class.bindTemplateCallback("page_detached", &tabViewPageDetached);
+            class.bindTemplateCallback("page_reordered", &tabViewPageReordered);
             class.bindTemplateCallback("tab_create_window", &tabViewCreateWindow);
             class.bindTemplateCallback("notify_n_pages", &tabViewNPages);
             class.bindTemplateCallback("notify_selected_page", &tabViewSelectedPage);

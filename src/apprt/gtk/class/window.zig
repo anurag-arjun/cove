@@ -2339,6 +2339,15 @@ pub const Window = extern struct {
         _ = gtk.Button.signals.clicked.connect(rename_btn, *Self, &sidebarContextRename, self, .{});
         vbox.append(rename_btn.as(gtk.Widget));
 
+        // Pin/Unpin button
+        const is_pinned = page.getPinned() != 0;
+        const pin_btn = gtk.Button.newWithLabel(if (is_pinned) "Unpin Workspace" else "Pin Workspace");
+        pin_btn.as(gtk.Widget).addCssClass("flat");
+        pin_btn.setHasFrame(@intFromBool(false));
+        pin_btn.as(gobject.Object).setData("cove-popover", popover);
+        _ = gtk.Button.signals.clicked.connect(pin_btn, *Self, &sidebarContextPin, self, .{});
+        vbox.append(pin_btn.as(gtk.Widget));
+
         // Separator
         const sep1 = gtk.Separator.new(.horizontal);
         vbox.append(sep1.as(gtk.Widget));
@@ -2385,6 +2394,23 @@ pub const Window = extern struct {
     }
 
     /// Context menu: Rename Workspace clicked.
+    /// Context menu: Pin/Unpin Workspace clicked.
+    fn sidebarContextPin(
+        btn: *gtk.Button,
+        self: *Self,
+    ) callconv(.c) void {
+        // Dismiss the popover first.
+        if (btn.as(gobject.Object).getData("cove-popover")) |data| {
+            const popover: *gtk.Popover = @ptrCast(@alignCast(data));
+            popover.popdown();
+        }
+        const priv = self.private();
+        const page = priv.tab_view.getSelectedPage() orelse return;
+        const is_pinned = page.getPinned() != 0;
+        priv.tab_view.setPagePinned(page, @intFromBool(!is_pinned));
+        self.sidebarRebuild();
+    }
+
     fn sidebarContextRename(
         btn: *gtk.Button,
         self: *Self,

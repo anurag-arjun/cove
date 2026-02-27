@@ -225,6 +225,9 @@ pub const Window = extern struct {
         /// Whether the sidebar is currently visible.
         sidebar_visible: bool = true,
 
+        /// Active sidebar context menu popover (if any).
+        sidebar_context_popover: ?*gtk.Popover = null,
+
         /// Whether we're currently updating the sidebar selection
         /// programmatically (to avoid re-entrant signals).
         updating_sidebar: bool = false,
@@ -291,6 +294,11 @@ pub const Window = extern struct {
             // the surface.
             if (config.title) |v| self.as(gtk.Window).setTitle(v);
         }
+
+        // Ensure sidebar starts visible. The bidirectional binding between
+        // sidebar-visible and the toggle button can race during template init,
+        // causing the sidebar to start hidden. Force the correct initial state.
+        priv.sidebar_visible = true;
 
         // We always sync our appearance at the end because loading our
         // config and such can affect our bindings which are setup initially
@@ -423,15 +431,30 @@ pub const Window = extern struct {
     }
 
     /// Create a sidebar row for the given tab page and insert it at the
-    /// correct position.
+    /// correct position. Each row is a GtkBox with [label | close button].
     fn sidebarAddRow(self: *Self, page: *adw.TabPage, position: c_int) void {
         const priv = self.private();
 
-        // Create the row content
+        // Row content: horizontal box with label + close button
+        const hbox = gtk.Box.new(.horizontal, 0);
+        hbox.as(gtk.Widget).setHexpand(@intFromBool(true));
+
+        // Title label (expands to fill)
         const label = gtk.Label.new("Workspace");
         label.setXalign(0);
         label.setEllipsize(.end);
         label.as(gtk.Widget).setHexpand(@intFromBool(true));
+        hbox.append(label.as(gtk.Widget));
+
+        // Close button (hidden by default, shown on hover)
+        const close_btn = gtk.Button.newFromIconName("window-close-symbolic");
+        close_btn.as(gtk.Widget).addCssClass("flat");
+        close_btn.as(gtk.Widget).addCssClass("circular");
+        close_btn.as(gtk.Widget).addCssClass("cove-sidebar-close");
+        close_btn.as(gtk.Widget).setVisible(@intFromBool(false));
+        close_btn.as(gtk.Widget).setValign(.center);
+        close_btn.as(gtk.Widget).setFocusable(@intFromBool(false));
+        hbox.append(close_btn.as(gtk.Widget));
 
         // Bind the page title to the label
         _ = page.as(gobject.Object).bindProperty(
@@ -443,15 +466,39 @@ pub const Window = extern struct {
 
         // Insert the row
         const list = priv.sidebar_list;
-        const row_widget = label.as(gtk.Widget);
-        list.insert(row_widget, position);
+        list.insert(hbox.as(gtk.Widget), position);
 
-        // Store a reference to the page on the row for lookup
+        // Get the GtkListBoxRow wrapper that GtkListBox created
         const row = list.getRowAtIndex(position) orelse return;
-        row.as(gobject.Object).setData(
-            "cove-tab-page",
-            page,
-        );
+
+        // Store references on the row for lookup
+        row.as(gobject.Object).setData("cove-tab-page", page);
+        row.as(gobject.Object).setData("cove-close-btn", close_btn);
+
+        // Close button click → close the workspace
+        _ = gtk.Button.signals.clicked.connect(close_btn, *Self, &sidebarCloseClicked, self, .{});
+
+        // Hover detection: show/hide close button on mouse enter/leave.
+        // We attach the controller to the row (not the hbox) so it covers
+        // the full clickable area including padding.
+        const motion = gtk.EventControllerMotion.new();
+        motion.as(gtk.EventController).setPropagationPhase(.capture);
+        row.as(gobject.Object).setData("cove-motion-ctrl", motion);
+        _ = gtk.EventControllerMotion.signals.enter.connect(motion, *Self, &sidebarRowEnter, self, .{});
+        _ = gtk.EventControllerMotion.signals.leave.connect(motion, *Self, &sidebarRowLeave, self, .{});
+        row.as(gtk.Widget).addController(motion.as(gtk.EventController));
+
+        // Middle-click to close workspace
+        const middle_click = gtk.GestureClick.new();
+        middle_click.as(gtk.GestureSingle).setButton(2);
+        _ = gtk.GestureClick.signals.released.connect(middle_click, *Self, &sidebarMiddleClick, self, .{});
+        row.as(gtk.Widget).addController(middle_click.as(gtk.EventController));
+
+        // Right-click context menu
+        const right_click = gtk.GestureClick.new();
+        right_click.as(gtk.GestureSingle).setButton(3);
+        _ = gtk.GestureClick.signals.released.connect(right_click, *Self, &sidebarRightClick, self, .{});
+        row.as(gtk.Widget).addController(right_click.as(gtk.EventController));
     }
 
     /// Get the tab page associated with a sidebar row via stored data.
@@ -1895,6 +1942,171 @@ pub const Window = extern struct {
         self: *Window,
     ) callconv(.c) void {
         self.toggleSidebar();
+    }
+
+    /// Get the close button stored on a sidebar row.
+    fn sidebarRowGetCloseBtn(row: *gtk.ListBoxRow) ?*gtk.Button {
+        const data = row.as(gobject.Object).getData("cove-close-btn") orelse return null;
+        return @ptrCast(@alignCast(data));
+    }
+
+    /// Find the GtkListBoxRow parent of an event controller's widget.
+    fn sidebarRowFromController(ec: *gtk.EventController) ?*gtk.ListBoxRow {
+        const widget = ec.getWidget() orelse return null;
+        // The controller is on the GtkListBoxRow itself.
+        return gobject.ext.cast(gtk.ListBoxRow, widget);
+    }
+
+    /// Close button clicked on a sidebar row.
+    fn sidebarCloseClicked(
+        btn: *gtk.Button,
+        self: *Self,
+    ) callconv(.c) void {
+        // Walk up to find the GtkListBoxRow
+        var widget: ?*gtk.Widget = btn.as(gtk.Widget).getParent(); // hbox
+        while (widget) |w| {
+            if (gobject.ext.cast(gtk.ListBoxRow, w)) |row| {
+                const page = sidebarRowGetPage(row) orelse return;
+                self.private().tab_view.closePage(page);
+                return;
+            }
+            widget = w.getParent();
+        }
+    }
+
+    /// Mouse entered a sidebar row — show close button.
+    fn sidebarRowEnter(
+        ec: *gtk.EventControllerMotion,
+        _: f64,
+        _: f64,
+        _: *Self,
+    ) callconv(.c) void {
+        const row = sidebarRowFromController(ec.as(gtk.EventController)) orelse return;
+        const btn = sidebarRowGetCloseBtn(row) orelse return;
+        btn.as(gtk.Widget).setVisible(@intFromBool(true));
+    }
+
+    /// Mouse left a sidebar row — hide close button.
+    fn sidebarRowLeave(
+        ec: *gtk.EventControllerMotion,
+        _: *Self,
+    ) callconv(.c) void {
+        const row = sidebarRowFromController(ec.as(gtk.EventController)) orelse return;
+        const btn = sidebarRowGetCloseBtn(row) orelse return;
+        btn.as(gtk.Widget).setVisible(@intFromBool(false));
+    }
+
+    /// Middle-click on a sidebar row — close the workspace.
+    fn sidebarMiddleClick(
+        gesture: *gtk.GestureClick,
+        _: c_int,
+        _: f64,
+        _: f64,
+        self: *Self,
+    ) callconv(.c) void {
+        const row = sidebarRowFromController(gesture.as(gtk.EventController)) orelse return;
+        const page = sidebarRowGetPage(row) orelse return;
+        self.private().tab_view.closePage(page);
+    }
+
+    /// Right-click on a sidebar row — show context menu.
+    fn sidebarRightClick(
+        gesture: *gtk.GestureClick,
+        _: c_int,
+        x: f64,
+        y: f64,
+        self: *Self,
+    ) callconv(.c) void {
+        const row = sidebarRowFromController(gesture.as(gtk.EventController)) orelse return;
+        const page = sidebarRowGetPage(row) orelse return;
+
+        // Select this row so actions target the correct workspace
+        const priv = self.private();
+        priv.tab_view.setSelectedPage(page);
+
+        // Dismiss any existing context menu popover
+        if (priv.sidebar_context_popover) |old| {
+            old.popdown();
+            // popdown triggers closed signal which calls unparent
+        }
+
+        // Build context menu using a plain GtkPopover with buttons
+        const popover = gtk.Popover.new();
+        priv.sidebar_context_popover = popover;
+        popover.as(gtk.Widget).setParent(row.as(gtk.Widget));
+        popover.setHasArrow(@intFromBool(false));
+        const rect: gdk.Rectangle = .{
+            .f_x = @intFromFloat(x),
+            .f_y = @intFromFloat(y),
+            .f_width = 1,
+            .f_height = 1,
+        };
+        popover.setPointingTo(&rect);
+
+        // Menu content
+        const vbox = gtk.Box.new(.vertical, 2);
+
+        // Rename button
+        const rename_btn = gtk.Button.newWithLabel("Rename Workspace…");
+        rename_btn.as(gtk.Widget).addCssClass("flat");
+        rename_btn.setHasFrame(@intFromBool(false));
+        // Store popover pointer so we can dismiss it from the callback
+        rename_btn.as(gobject.Object).setData("cove-popover", popover);
+        _ = gtk.Button.signals.clicked.connect(rename_btn, *Self, &sidebarContextRename, self, .{});
+        vbox.append(rename_btn.as(gtk.Widget));
+
+        // Close button
+        const close_btn = gtk.Button.newWithLabel("Close Workspace");
+        close_btn.as(gtk.Widget).addCssClass("flat");
+        close_btn.setHasFrame(@intFromBool(false));
+        close_btn.as(gobject.Object).setData("cove-popover", popover);
+        _ = gtk.Button.signals.clicked.connect(close_btn, *Self, &sidebarContextClose, self, .{});
+        vbox.append(close_btn.as(gtk.Widget));
+
+        popover.setChild(vbox.as(gtk.Widget));
+
+        // Clean up popover when closed
+        _ = gtk.Popover.signals.closed.connect(popover, *Self, &sidebarPopoverClosed, self, .{});
+
+        popover.popup();
+    }
+
+    /// Context menu: Rename Workspace clicked.
+    fn sidebarContextRename(
+        btn: *gtk.Button,
+        self: *Self,
+    ) callconv(.c) void {
+        // Dismiss the popover first
+        if (btn.as(gobject.Object).getData("cove-popover")) |data| {
+            const popover: *gtk.Popover = @ptrCast(@alignCast(data));
+            popover.popdown();
+        }
+        self.performBindingAction(.prompt_tab_title);
+    }
+
+    /// Context menu: Close Workspace clicked.
+    fn sidebarContextClose(
+        btn: *gtk.Button,
+        self: *Self,
+    ) callconv(.c) void {
+        // Dismiss the popover first
+        if (btn.as(gobject.Object).getData("cove-popover")) |data| {
+            const popover: *gtk.Popover = @ptrCast(@alignCast(data));
+            popover.popdown();
+        }
+        self.performBindingAction(.{ .close_tab = .this });
+    }
+
+    /// Clean up a sidebar context menu popover after it closes.
+    fn sidebarPopoverClosed(
+        popover: *gtk.Popover,
+        self: *Self,
+    ) callconv(.c) void {
+        const priv = self.private();
+        if (priv.sidebar_context_popover == popover) {
+            priv.sidebar_context_popover = null;
+        }
+        popover.as(gtk.Widget).unparent();
     }
 
     /// Sidebar row activated — select the corresponding tab page.

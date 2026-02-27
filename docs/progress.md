@@ -50,18 +50,20 @@ After research spikes on both approaches (see `spike-strategy1-gtk4-rewrite.md` 
 - [x] Commit: `6363939c4` — "cove: Phase 1 — vertical sidebar replaces tab bar"
 - [x] Build verified: `./build.sh` produces working `zig-out/bin/cove` with sidebar
 
-#### Phase 1 Polish (Not Yet Done)
+#### Phase 1 Polish (In Progress)
+- [~] Close button (X) on sidebar row, visible on hover — **code complete, builds, needs runtime test**
+- [~] Middle-click sidebar row to close workspace — **code complete, builds, needs runtime test**
+- [~] Right-click context menu on sidebar rows (Rename, Close) — **code complete, builds, needs runtime test**
 - [ ] Keyboard navigation (Up/Down in sidebar, Enter to select)
-- [ ] Middle-click sidebar row to close workspace
-- [ ] Right-click context menu on sidebar rows (rename, close)
 - [ ] Sidebar auto-hide when only 1 workspace (config option)
 - [ ] Double-click sidebar row to rename workspace
 - [ ] Persist sidebar width in config
+- [ ] Drag-to-reorder sidebar rows
 
 ### 🔲 Not Started
-- [ ] Phase 2: Notification system (blue badges, desktop notifications)
-- [ ] Phase 3: Workspace metadata (git branch, ports, pwd in sidebar rows)
-- [ ] Phase 4: Socket API & CLI (`cove +list-workspaces`, etc.)
+- [ ] Phase 2: Notification system (blue badges, desktop notifications, jump-to-unread)
+- [ ] Phase 3: Workspace metadata + sidebar UX (git branch, ports, pwd, pin, tab color, multi-select, shortcut hints)
+- [ ] Phase 4: Socket API & CLI + metadata commands (`cove +list-workspaces`, status, log, progress, PR, move-to-window)
 - [ ] Phase 5: Browser panel (WebKitGTK)
 - [ ] Phase 6: Session persistence
 
@@ -74,10 +76,10 @@ After research spikes on both approaches (see `spike-strategy1-gtk4-rewrite.md` 
 | Phase | Feature | Est. Lines | Status |
 |-------|---------|-----------|--------|
 | 0 | Repo, build, README, attribution | 100 | ✅ Done |
-| 1 | Vertical sidebar (replace AdwTabBar) | 1,700 | 🟡 Core done, polish remaining |
+| 1 | Vertical sidebar (replace AdwTabBar) | 1,700 | 🟡 Core done, polish remaining (~350 lines) |
 | 2 | Notification system | 400 | 🔲 Not started |
-| 3 | Workspace metadata (git, ports, pwd) | 600 | 🔲 Not started |
-| 4 | Socket API & CLI (`cove +cmd`) | 2,500 | 🔲 Not started |
+| 3 | Workspace metadata + sidebar UX (git, ports, pwd, pin, color, multi-select, shortcut hints) | 900 | 🔲 Not started |
+| 4 | Socket API & CLI + metadata commands (`cove +cmd`, status, log, progress, PR) | 3,200 | 🔲 Not started |
 | 5 | Browser panel (WebKitGTK) | 2,000 | 🔲 Not started |
 | 6 | Session persistence | 500 | 🔲 Not started |
 
@@ -258,6 +260,141 @@ Commits (cove/main):
 - GTK/GObject type mismatches: `setHexpand(true)` needs `@intFromBool(true)` (c_int, not bool); `getData()` returns `*anyopaque` requiring `@ptrCast` not `gobject.ext.cast`.
 
 **Next actions (in order):**
-1. **Phase 1 polish:** Keyboard nav, middle-click close, right-click context menu, auto-hide, rename, persist width
+1. **Phase 1 polish:** Close button on hover, keyboard nav, middle-click close, right-click context menu, drag-reorder, rename, persist width
 2. **Phase 2:** Notification system — blue badges on sidebar rows, desktop notifications via GLib
-3. **Phase 3:** Workspace metadata — git branch, pwd, ports in sidebar rows
+3. **Phase 3:** Workspace metadata + sidebar UX — git branch, pwd, ports, pin, tab color, multi-select, shortcut hints
+
+### Session 2026-02-26 (cont.) — cmux Source Audit & Plan Hardening
+
+**Key decisions made:**
+1. **cmux source code is the behavioral spec.** Every task item in `plan.md` now has a `cmux:` annotation pointing to the exact file, line range, and function in the cmux macOS source (`github.com/manaflow-ai/cmux`, cached at `/tmp/pi-github-repos/manaflow-ai/cmux/`). Always read the referenced cmux code before implementing a task.
+2. **Phase scope expanded after cmux audit.** Deep comparison of our Phase 1 sidebar vs cmux's `TabItemView` revealed missing features. These were triaged into later phases rather than blocking Phase 1.
+3. **Phase 1d expanded** — added close button (X) on hover and drag-to-reorder as explicit task items (were previously only in a "deferred" note).
+4. **Phase 3 expanded** (600→900 lines) — absorbed deferred sidebar UX items: pin/unpin workspace, tab color, multi-select, workspace shortcut hints.
+5. **Phase 4 expanded** (2,500→3,200 lines) — absorbed deferred metadata commands from cmux: status entries, log entries, progress bar, PR status, move-workspace-to-window.
+6. **Double-click behavior difference noted:** cmux does NOT double-click sidebar rows to rename — double-click on empty sidebar area creates a new workspace. Rename is context menu or command palette only. Decision still open for Cove (double-click row to rename is more conventional in GNOME).
+
+**Work completed:**
+- Cloned cmux repo (`github.com/manaflow-ai/cmux`) for reference
+- Added comprehensive "cmux Source Reference" section to `plan.md` with file-by-feature table (18 rows covering all ~31K lines of key cmux Swift source)
+- Added `cmux:` annotations to all 57 task items across all 6 phases (71 total annotations)
+- Annotated all 9 completed Phase 1a-c `[x]` items with cmux equivalents or "N/A — Cove-specific"
+- Added cmux sidebar layout diagram for visual comparison
+- Documented "cmux features NOT yet implemented" with explicit target phases for each
+- Identified cmux features we hadn't planned for: status entries, log entries, progress bar, PR status, multi-select, shortcut hints, pin, tab color, move-to-window
+- Updated milestone estimates in both `plan.md` and `progress.md`
+
+**No code changes this session** — documentation/planning only.
+
+**Next actions (in order):**
+1. **Phase 1d polish** — start with close button on hover (highest UX impact), then middle-click close, right-click context menu, drag-reorder
+2. Read cmux `ContentView.swift` ~L6191–6850 (`TabItemView`) and ~L8113–8148 (`MiddleClickCapture`) before implementing
+3. For close button: change `sidebarAddRow()` from plain `GtkLabel` to `GtkBox` (label + button), add `GtkEventControllerMotion` for hover
+4. For middle-click: add `GtkGestureClick` with button=2 to sidebar rows
+5. For context menu: create `GtkPopoverMenu` with `GMenu` model (Rename, Close, Close Others)
+6. Build and test after each item: `./build.sh run`
+
+### Session 2026-02-26 (cont.) — Phase 1d Implementation Started
+
+**Work completed (in progress, not yet committed):**
+- Rewrote `sidebarAddRow()` in `window.zig`: sidebar rows changed from plain `GtkLabel` to `GtkBox` (horizontal) with title label + close button
+  - Close button: `window-close-symbolic` icon, flat+circular style, hidden by default, shown on hover via `GtkEventControllerMotion`
+  - Middle-click close: `GtkGestureClick` with button=2 on each row
+  - Right-click context menu: `GtkGestureClick` with button=3 → builds `GtkPopoverMenu` from `gio.Menu` (Rename Workspace, Close Workspace)
+  - Data stored on each `GtkListBoxRow` via `setData()`: `cove-tab-page` (page ref), `cove-close-btn` (button ref), `cove-motion-ctrl` (motion controller ref)
+- Added ~110 lines of new callback functions:
+  - `sidebarRowGetCloseBtn()` — retrieve close button from row data
+  - `sidebarRowFromController()` — find `GtkListBoxRow` from event controller's widget
+  - `sidebarCloseClicked()` — walks up widget tree to find row, then calls `tab_view.closePage()`
+  - `sidebarRowEnter()` / `sidebarRowLeave()` — show/hide close button on hover
+  - `sidebarMiddleClick()` — close workspace on middle-click
+  - `sidebarRightClick()` — build and show context menu popover
+  - `sidebarPopoverClosed()` — unparent popover on close (cleanup)
+- Added CSS for `.cove-sidebar-close` button (small, low opacity, full opacity on hover)
+
+**Build error encountered — NOT YET RESOLVED:**
+- `gtk4.Button has no member named 'connectClicked'` — the zig-gobject bindings use `TypeName.signals.signal_name.connect()` pattern, NOT `TypeName.connectSignalName()`.
+- Same issue applies to `EventControllerMotion.connectEnter/connectLeave` and `GestureClick.connectReleased`.
+- Fix needed: change all 5 signal connections in `sidebarAddRow()` to use the `signals.X.connect()` pattern (e.g., `gtk.Button.signals.clicked.connect(close_btn, ...)`).
+- Reference for correct pattern: `Tab.signals.@"close-request".connect(tab, *Self, tabCloseRequest, self, .{})` at window.zig ~L1420.
+
+**Key decisions made:**
+1. **Sidebar row layout:** `GtkBox` (horizontal) with `GtkLabel` (hexpand) + `GtkButton` (close, hidden until hover). Simpler than creating a custom GObject widget. Matches cmux's `HStack` pattern in `TabItemView`.
+2. **Close button visibility:** Controlled by `GtkEventControllerMotion` enter/leave on the `GtkListBoxRow` (not the hbox). Controller uses `.capture` phase to ensure it fires before child widget events.
+3. **Context menu approach:** Programmatic `gio.Menu` + `gtk.PopoverMenu` created on-demand per right-click. Menu is parented to the row, unparented on close. Simpler than a template-based approach since menu items will expand in later phases.
+4. **Right-click selects row first:** Before showing context menu, the clicked row's page is selected in `AdwTabView`. This ensures `win.close-tab` and `win.prompt-tab-title` actions target the correct workspace.
+
+**Files modified (uncommitted):**
+- `src/apprt/gtk/class/window.zig` — `sidebarAddRow()` rewritten, 7 new callback functions added
+- `src/apprt/gtk/css/style.css` — `.cove-sidebar-close` styles added
+- `docs/plan.md` — cmux annotations (from previous session work)
+- `docs/progress.md` — session log
+
+**Next actions (in order):**
+1. ~~**Fix signal connection syntax**~~ → **DONE** (see next session)
+2. **Build and test** — `./build.sh run`, verify close button appears on hover, middle-click closes, right-click shows menu
+3. ~~**Fix callback signatures if needed**~~ → **Not needed** (signatures were already correct)
+4. **After build succeeds:** Test all three features, then move on to remaining Phase 1d items (drag-reorder, keyboard nav, sidebar width persistence)
+5. **Commit** when close button + middle-click + context menu all work
+
+### Session 2026-02-26 (cont.) — Signal Fix, Build Passes, Test Plans & Automated Test Strategy
+
+**Work completed:**
+
+1. **Fixed all 6 signal connection calls in `window.zig`** — the zig-gobject bindings use `TypeName.signals.signal_name.connect()`, NOT `TypeName.connectSignalName()`. Changed:
+   - `gtk.Button.connectClicked(...)` → `gtk.Button.signals.clicked.connect(...)`
+   - `gtk.EventControllerMotion.connectEnter(...)` → `gtk.EventControllerMotion.signals.enter.connect(...)`
+   - `gtk.EventControllerMotion.connectLeave(...)` → `gtk.EventControllerMotion.signals.leave.connect(...)`
+   - `gtk.GestureClick.connectReleased(...)` → `gtk.GestureClick.signals.released.connect(...)` (×2, for middle-click and right-click)
+   - `gtk.Popover.connectClosed(...)` → `gtk.Popover.signals.closed.connect(...)` (in `sidebarRightClick`)
+   - Callback signatures were already correct — no changes needed there.
+   - **Build now passes.** Binary at `zig-out/bin/cove` (150MB debug build).
+
+2. **Added manual testing plans to `plan.md`** — 202 test cases across all 7 phases:
+   - Phase 0: 15 tests (binary name, app ID, About dialog, D-Bus, config compat)
+   - Phase 1: 42 tests (sidebar basics, workspace CRUD, toggle, close/middle-click/context menu, splits interaction, edge cases)
+   - Phase 2: 20 tests (notification badges, desktop notifications, mark-as-read, jump-to-unread)
+   - Phase 3: 34 tests (PWD, git branch, ports, combined metadata, pin, tab color, multi-select, shortcut hints)
+   - Phase 4: 39 tests (socket server, CLI workspace management, terminal interaction, env vars, metadata commands, error handling)
+   - Phase 5: 25 tests (browser panel, split integration, socket API for browser)
+   - Phase 6: 27 tests (save/restore, autosave, --no-restore, corrupt files, edge cases)
+
+3. **Added automated test strategy to `plan.md`** — researched both Ghostty's and cmux's test infrastructure:
+   - **Ghostty:** 2,473 Zig unit tests across 166 files, comprehensive CI (GTK X11/Wayland matrix, Valgrind, 10+ linters, multi-platform builds). We inherit all of this.
+   - **cmux:** 3 test layers (~15,500 lines total): 8 XCTest unit test files (~11,670 lines), 10 XCUITest UI test files (~3,837 lines), ~80 Python integration scripts in `tests/` using a `cmux.py` socket client library. CI only runs `UpdatePillUITests`.
+   - **Cove strategy (3 layers):**
+     - Layer 1: Zig unit tests (`zig build test`) — inherited 2,473 + ~30-50 new for notification store, git parser, port scanner, socket protocol, session serialization
+     - Layer 2: Python integration tests (`tests/`) — socket-driven `cove.py` client modeled on cmux's `cmux.py`, ~50 tests across 10 files, available from Phase 4+
+     - Layer 3: Visual/E2E (future) — `xvfb-run` + socket API + AT-SPI accessibility queries
+   - CI plan: GitHub Actions with `zig build test` + `xvfb-run` integration tests
+
+**Key decisions made:**
+1. **zig-gobject signal pattern:** Always use `TypeName.signals.signal_name.connect(instance, DataType, &callback, data, .{})`. Never use `TypeName.connectSignalName()` — that method doesn't exist in the bindings. Discovered by inspecting the generated binding source at `~/.cache/zig/p/gobject-0.3.0-*/src/gtk4/gtk4.zig`.
+2. **Callback signatures match the signal definition exactly:** `clicked` = `fn(*Button, *Self) callconv(.c) void`; `enter` = `fn(*EventControllerMotion, f64, f64, *Self) callconv(.c) void`; `leave` = `fn(*EventControllerMotion, *Self) callconv(.c) void`; `released` = `fn(*GestureClick, c_int, f64, f64, *Self) callconv(.c) void`; `closed` = `fn(*Popover, *PopoverMenu) callconv(.c) void`. These were already correct in our code.
+3. **Test strategy:** 3-layer pyramid matching cmux's approach but adapted for Zig/GTK/Linux. Manual testing plans serve as the spec until socket API enables automated integration tests in Phase 4.
+
+**Files modified (uncommitted):**
+- `src/apprt/gtk/class/window.zig` — 6 signal connection calls fixed (from previous session: `sidebarAddRow()` rewrite + 7 callbacks)
+- `src/apprt/gtk/css/style.css` — `.cove-sidebar-close` styles (from previous session)
+- `docs/plan.md` — added 202 manual test cases (7 phase testing plans), automated test strategy section, cmux/Ghostty test infrastructure analysis
+- `docs/progress.md` — session log updates
+
+**Build state:** ✅ Passes. `zig-out/bin/cove` exists. Not yet runtime-tested.
+
+**Next actions (in order):**
+1. **Runtime test Phase 1d features** — `./build.sh run`, then test:
+   - Hover over sidebar row → close button (X) appears
+   - Click X → workspace closes
+   - Middle-click sidebar row → workspace closes
+   - Right-click sidebar row → context menu with "Rename Workspace…" and "Close Workspace"
+   - Context menu items work (rename triggers title dialog, close removes workspace)
+   - Dismissing context menu (Escape / click elsewhere) works without crash
+2. **Fix any runtime issues** found during testing (likely: widget hierarchy issues, popover positioning, event propagation)
+3. **Commit** Phase 1d close/middle-click/context-menu when all 3 work: `cove: Phase 1d — close button, middle-click, context menu on sidebar rows`
+4. **Continue Phase 1d remaining items** — priority order:
+   - Keyboard navigation (Up/Down in sidebar) — may already work via `GtkListBox` built-in keyboard handling
+   - Drag-to-reorder sidebar rows — `GtkDragSource` + `GtkDropTarget` + `AdwTabView.reorderPage()`
+   - Sidebar width persistence — save `GtkPaned` position to config on change
+   - Double-click to rename — `GtkGestureClick` with `count=2`
+   - Sidebar auto-hide when 1 workspace — monitor `page-attached`/`page-detached` count
+5. **After Phase 1d complete:** commit, push to `origin/cove/main`, then start Phase 2 (notifications)

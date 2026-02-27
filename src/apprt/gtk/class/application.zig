@@ -475,6 +475,64 @@ pub const Application = extern struct {
         return &self.private().notification_store;
     }
 
+    /// Cove: store a notification in the notification store.
+    /// Handles tab_id extraction from surface, focus suppression, and error handling.
+    pub fn storeNotification(
+        self: *Self,
+        core_surface: *CoreSurface,
+        title: []const u8,
+        subtitle: []const u8,
+        body: []const u8,
+    ) void {
+        const gobj = core_surface.rt_surface.gobj();
+        const widget = gobj.as(gtk.Widget);
+
+        // Walk up widget tree to find Tab, then find its page.
+        var cur: ?*gtk.Widget = widget;
+        while (cur) |w| {
+            if (gobject.ext.cast(Tab, w)) |tab| {
+                // Found the tab — now find its page in any window.
+                const root = w.getRoot() orelse return;
+                const window = gobject.ext.cast(Window, root) orelse return;
+                const tab_view = window.getTabView();
+                const n_pages = tab_view.getNPages();
+
+                var i: c_int = 0;
+                while (i < n_pages) : (i += 1) {
+                    const page = tab_view.getNthPage(i);
+                    if (page.getChild() == tab.as(gtk.Widget)) {
+                        const tab_id: NotificationStore.TabId = @intFromPtr(page);
+                        const surface_id: ?NotificationStore.SurfaceId = @intFromPtr(gobj);
+
+                        // Determine if focused.
+                        const focused_tab: ?NotificationStore.TabId = ft: {
+                            const sel = tab_view.getSelectedPage() orelse break :ft null;
+                            break :ft @intFromPtr(sel);
+                        };
+                        const gtk_window = window.as(gtk.Window);
+                        const app_active = gtk_window.isActive() != 0;
+
+                        const store = self.notificationStore();
+                        _ = store.add(
+                            tab_id,
+                            surface_id,
+                            title,
+                            subtitle,
+                            body,
+                            focused_tab,
+                            app_active,
+                        ) catch |err| {
+                            log.warn("failed to store notification: {}", .{err});
+                        };
+                        return;
+                    }
+                }
+                return;
+            }
+            cur = w.getParent();
+        }
+    }
+
     /// Run the application. This is a replacement for `gio.Application.run`
     /// because we want more tight control over our event loop so we can
     /// integrate it with libghostty.
@@ -744,7 +802,7 @@ pub const Application = extern struct {
 
             .resize_split => return Action.resizeSplit(target, value),
 
-            .ring_bell => Action.ringBell(target),
+            .ring_bell => Action.ringBell(self, target),
 
             .scrollbar => Action.scrollbar(target, value),
 
@@ -1872,6 +1930,9 @@ const Action = struct {
         switch (target) {
             .app => {},
             .surface => |v| {
+                // Cove: store notification before sending desktop notification.
+                self.storeNotification(v, n.title, "", n.body);
+
                 v.rt_surface.gobj().sendDesktopNotification(n.title, n.body);
                 return;
             },
@@ -2401,10 +2462,14 @@ const Action = struct {
         }
     }
 
-    pub fn ringBell(target: apprt.Target) void {
+    pub fn ringBell(self: *Application, target: apprt.Target) void {
         switch (target) {
             .app => {},
-            .surface => |v| v.rt_surface.surface.setBellRinging(true),
+            .surface => |v| {
+                v.rt_surface.surface.setBellRinging(true);
+                // Cove: store bell notification.
+                self.storeNotification(v, "Bell", "", "");
+            },
         }
     }
 

@@ -29,6 +29,8 @@ const Tab = @import("tab.zig").Tab;
 const DebugWarning = @import("debug_warning.zig").DebugWarning;
 const CommandPalette = @import("command_palette.zig").CommandPalette;
 const WeakRef = @import("../weak_ref.zig").WeakRef;
+const git_branch = @import("../git_branch.zig");
+const path_shorten = @import("../path_shorten.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
 
@@ -431,11 +433,15 @@ pub const Window = extern struct {
     }
 
     /// Create a sidebar row for the given tab page and insert it at the
-    /// correct position. Each row is a GtkBox with [label | close button].
+    /// correct position. Layout: vertical box with title row + metadata subtitle.
     fn sidebarAddRow(self: *Self, page: *adw.TabPage, position: c_int) void {
         const priv = self.private();
 
-        // Row content: horizontal box with label + close button
+        // Outer vertical box: [title_row, subtitle_label]
+        const vbox = gtk.Box.new(.vertical, 0);
+        vbox.as(gtk.Widget).setHexpand(@intFromBool(true));
+
+        // Title row: horizontal box with label + close button
         const hbox = gtk.Box.new(.horizontal, 0);
         hbox.as(gtk.Widget).setHexpand(@intFromBool(true));
 
@@ -456,6 +462,17 @@ pub const Window = extern struct {
         close_btn.as(gtk.Widget).setFocusable(@intFromBool(false));
         hbox.append(close_btn.as(gtk.Widget));
 
+        vbox.append(hbox.as(gtk.Widget));
+
+        // Subtitle label for metadata (PWD + git branch)
+        const subtitle = gtk.Label.new("");
+        subtitle.setXalign(0);
+        subtitle.setEllipsize(.end);
+        subtitle.as(gtk.Widget).addCssClass("dim-label");
+        subtitle.as(gtk.Widget).addCssClass("cove-sidebar-subtitle");
+        subtitle.as(gtk.Widget).setVisible(@intFromBool(false)); // hidden until metadata available
+        vbox.append(subtitle.as(gtk.Widget));
+
         // Bind the page title to the label
         _ = page.as(gobject.Object).bindProperty(
             "title",
@@ -466,7 +483,7 @@ pub const Window = extern struct {
 
         // Insert the row
         const list = priv.sidebar_list;
-        list.insert(hbox.as(gtk.Widget), position);
+        list.insert(vbox.as(gtk.Widget), position);
 
         // Get the GtkListBoxRow wrapper that GtkListBox created
         const row = list.getRowAtIndex(position) orelse return;
@@ -474,6 +491,7 @@ pub const Window = extern struct {
         // Store references on the row for lookup
         row.as(gobject.Object).setData("cove-tab-page", page);
         row.as(gobject.Object).setData("cove-close-btn", close_btn);
+        row.as(gobject.Object).setData("cove-subtitle", subtitle);
 
         // Close button click → close the workspace
         _ = gtk.Button.signals.clicked.connect(close_btn, *Self, &sidebarCloseClicked, self, .{});
@@ -1979,6 +1997,126 @@ pub const Window = extern struct {
         self: *Window,
     ) callconv(.c) void {
         self.toggleSidebar();
+    }
+
+    /// Get the subtitle label stored on a sidebar row.
+    fn sidebarRowGetSubtitle(row: *gtk.ListBoxRow) ?*gtk.Label {
+        const data = row.as(gobject.Object).getData("cove-subtitle") orelse return null;
+        return @ptrCast(@alignCast(data));
+    }
+
+    /// Public: update sidebar metadata for the tab page containing a given surface.
+    /// Called from Application when pwd changes.
+    pub fn updateSidebarMetadataForSurface(self: *Self, surface: *Surface) void {
+        const priv = self.private();
+        const tab_view = priv.tab_view;
+
+        // Walk up the widget tree from the surface to find its Tab, then its page.
+        var widget: ?*gtk.Widget = surface.as(gtk.Widget);
+        while (widget) |w| {
+            if (gobject.ext.cast(Tab, w)) |tab| {
+                // Find the page for this tab in the tab view.
+                const n_pages = tab_view.getNPages();
+                var i: c_int = 0;
+                while (i < n_pages) : (i += 1) {
+                    const page = tab_view.getNthPage(i);
+                    if (page.getChild() == tab.as(gtk.Widget)) {
+                        self.sidebarUpdateRowMetadata(page);
+                        return;
+                    }
+                }
+                return;
+            }
+            widget = w.getParent();
+        }
+    }
+
+    /// Update sidebar row metadata (PWD + git branch) for a given tab page.
+    fn sidebarUpdateRowMetadata(self: *Self, page: *adw.TabPage) void {
+        const priv = self.private();
+        const list = priv.sidebar_list;
+
+        // Find the row for this page.
+        var i: c_int = 0;
+        const row = while (true) : (i += 1) {
+            const r = list.getRowAtIndex(i) orelse return;
+            const stored = sidebarRowGetPage(r) orelse continue;
+            if (stored == page) break r;
+        };
+
+        const subtitle_label = sidebarRowGetSubtitle(row) orelse return;
+
+        // Get the active surface's pwd from the tab.
+        const child = page.getChild();
+        const tab = gobject.ext.cast(Tab, child) orelse return;
+        const surface = tab.getActiveSurface() orelse return;
+        const pwd: [:0]const u8 = surface.getPwd() orelse {
+            subtitle_label.as(gtk.Widget).setVisible(@intFromBool(false));
+            return;
+        };
+        if (pwd.len == 0) {
+            subtitle_label.as(gtk.Widget).setVisible(@intFromBool(false));
+            return;
+        }
+
+        // Get home directory for path shortening.
+        const home = std.posix.getenv("HOME") orelse "";
+
+        // Shorten the path.
+        var shorten_buf: [512]u8 = undefined;
+        const short_path = path_shorten.shorten(pwd, home, &shorten_buf, 3);
+
+        // Detect git branch.
+        var git_buf: [4096]u8 = undefined;
+        const branch_info = git_branch.detect(pwd, &git_buf);
+
+        // Build metadata string: "🌿 branch  📁 ~/path" or just "📁 ~/path"
+        var meta_buf: [1024]u8 = undefined;
+        var meta_pos: usize = 0;
+
+        if (branch_info) |info| {
+            const branch_text = switch (info) {
+                .branch => |b| b,
+                .detached => |h| h,
+            };
+            // "🌿 " prefix (tree emoji = 4 bytes + space)
+            const branch_prefix = "\xf0\x9f\x8c\xbf ";
+            if (meta_pos + branch_prefix.len + branch_text.len < meta_buf.len) {
+                @memcpy(meta_buf[meta_pos..][0..branch_prefix.len], branch_prefix);
+                meta_pos += branch_prefix.len;
+                @memcpy(meta_buf[meta_pos..][0..branch_text.len], branch_text);
+                meta_pos += branch_text.len;
+            }
+        }
+
+        if (short_path.len > 0) {
+            if (meta_pos > 0) {
+                // Add separator
+                const sep = "  ";
+                if (meta_pos + sep.len < meta_buf.len) {
+                    @memcpy(meta_buf[meta_pos..][0..sep.len], sep);
+                    meta_pos += sep.len;
+                }
+            }
+            // "📁 " prefix (file folder emoji = 4 bytes + space)
+            const path_prefix = "\xf0\x9f\x93\x81 ";
+            if (meta_pos + path_prefix.len + short_path.len < meta_buf.len) {
+                @memcpy(meta_buf[meta_pos..][0..path_prefix.len], path_prefix);
+                meta_pos += path_prefix.len;
+                @memcpy(meta_buf[meta_pos..][0..short_path.len], short_path);
+                meta_pos += short_path.len;
+            }
+        }
+
+        if (meta_pos > 0) {
+            // Null-terminate for GTK.
+            meta_buf[meta_pos] = 0;
+            const meta_z: [*:0]const u8 = meta_buf[0..meta_pos :0];
+            subtitle_label.setLabel(meta_z);
+            subtitle_label.as(gtk.Widget).setVisible(@intFromBool(true));
+        } else {
+            subtitle_label.as(gtk.Widget).setVisible(@intFromBool(false));
+        }
     }
 
     /// Get the close button stored on a sidebar row.

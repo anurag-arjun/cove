@@ -2234,7 +2234,17 @@ const Action = struct {
     ) void {
         switch (target) {
             .app => log.warn("pwd to app is unexpected", .{}),
-            .surface => |surface| surface.rt_surface.gobj().setPwd(value.pwd),
+            .surface => |surface| {
+                const gobj = surface.rt_surface.gobj();
+                gobj.setPwd(value.pwd);
+
+                // Cove: update sidebar metadata for the workspace containing this surface.
+                // Find the window and trigger a metadata refresh.
+                const widget = gobj.as(gtk.Widget);
+                const root = widget.getRoot() orelse return;
+                const window = gobject.ext.cast(Window, root) orelse return;
+                window.updateSidebarMetadataForSurface(gobj);
+            },
         }
     }
 

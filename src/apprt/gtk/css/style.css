@@ -187,6 +187,11 @@ label.resize-overlay {
   opacity: 1.0;
 }
 
+.cove-sidebar-subtitle {
+  font-size: 0.8em;
+  margin-top: 2px;
+}
+
 .window .split paned > separator {
   background-color: rgba(250, 250, 250, 1);
   /* after GTK 4.16 is a requirement, switch to the following: */

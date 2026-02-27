@@ -34,7 +34,7 @@ After research spikes on both approaches (see `spike-strategy1-gtk4-rewrite.md` 
 - [x] `main` branch tracks upstream Ghostty exactly (never commit Cove code here)
 - [x] Commit: `6816b450a` — "cove: Phase 0 — rename to Cove, add attribution, set up repo"
 
-### ✅ Phase 1 — Vertical Sidebar (Core Complete, Polish Remaining)
+### ✅ Phase 1 — Vertical Sidebar (Complete)
 - [x] Replaced `AdwTabOverview` + `AdwTabBar` with `GtkPaned` + sidebar `GtkListBox`
 - [x] Kept `AdwTabView` internally for page management (key architectural decision — see notes)
 - [x] Sidebar shows workspace list with titles bound from tab page titles
@@ -50,15 +50,22 @@ After research spikes on both approaches (see `spike-strategy1-gtk4-rewrite.md` 
 - [x] Commit: `6363939c4` — "cove: Phase 1 — vertical sidebar replaces tab bar"
 - [x] Build verified: `./build.sh` produces working `zig-out/bin/cove` with sidebar
 
-#### Phase 1 Polish (In Progress)
-- [~] Close button (X) on sidebar row, visible on hover — **code complete, builds, needs runtime test**
-- [~] Middle-click sidebar row to close workspace — **code complete, builds, needs runtime test**
-- [~] Right-click context menu on sidebar rows (Rename, Close) — **code complete, builds, needs runtime test**
-- [ ] Keyboard navigation (Up/Down in sidebar, Enter to select)
-- [ ] Sidebar auto-hide when only 1 workspace (config option)
-- [ ] Double-click sidebar row to rename workspace
-- [ ] Persist sidebar width in config
-- [ ] Drag-to-reorder sidebar rows
+#### Phase 1 Polish (Complete)
+- [x] Close button (X) on sidebar row, visible on hover — `GtkEventControllerMotion` enter/leave
+- [x] Middle-click sidebar row to close workspace — `GtkGestureClick` button=2
+- [x] Right-click context menu on sidebar rows (Rename, Move Up/Down, Close) — plain `GtkPopover` with direct callbacks
+- [x] Fixed sidebar not visible by default (bidirectional binding race fix)
+- [x] Double-click sidebar row to rename workspace — `GtkGestureClick` n_press=2
+- [x] Reorder via context menu Move Up/Down — `AdwTabView.reorderPage()` + `page-reordered` signal + `sidebarRebuild()`
+- [x] Keyboard navigation (Up/Down in sidebar, Enter to select) — built into `GtkListBox` with `selection-mode: browse`
+- [x] Commit: `febc8fd98` — "cove: Phase 1d — close button, middle-click, context menu"
+- [x] Commit: `e0ae72a56` — "cove: Phase 1d — double-click rename, reorder via context menu"
+- [x] All Phase 1 manual tests passing (42/42)
+
+#### Phase 1 Deferred (Low Priority)
+- [ ] Drag-to-reorder sidebar rows — **attempted, removed** (GTK `DragSource` snapshot crashes with terminal EGL contexts; see session log)
+- [ ] Sidebar auto-hide when only 1 workspace — cmux doesn't do this; skipped
+- [ ] Persist sidebar width in config — needs `~/.config/cove/config` setup (Phase 3+)
 
 ### 🔲 Not Started
 - [ ] Phase 2: Notification system (blue badges, desktop notifications, jump-to-unread)
@@ -76,7 +83,7 @@ After research spikes on both approaches (see `spike-strategy1-gtk4-rewrite.md` 
 | Phase | Feature | Est. Lines | Status |
 |-------|---------|-----------|--------|
 | 0 | Repo, build, README, attribution | 100 | ✅ Done |
-| 1 | Vertical sidebar (replace AdwTabBar) | 1,700 | 🟡 Core done, polish remaining (~350 lines) |
+| 1 | Vertical sidebar (replace AdwTabBar) | 1,700 | ✅ Done |
 | 2 | Notification system | 400 | 🔲 Not started |
 | 3 | Workspace metadata + sidebar UX (git, ports, pwd, pin, color, multi-select, shortcut hints) | 900 | 🔲 Not started |
 | 4 | Socket API & CLI + metadata commands (`cove +cmd`, status, log, progress, PR) | 3,200 | 🔲 Not started |
@@ -187,6 +194,8 @@ Branches:
   main      → upstream/main (tracks Ghostty, never commit here)
 
 Commits (cove/main):
+  e0ae72a56 cove: Phase 1d — double-click rename, reorder via context menu
+  febc8fd98 cove: Phase 1d — close button, middle-click, context menu
   6363939c4 cove: Phase 1 — vertical sidebar replaces tab bar
   6816b450a cove: Phase 0 — rename to Cove, add attribution, set up repo
   74ba971eb (upstream) Update VOUCHED list (#11028)
@@ -382,19 +391,68 @@ Commits (cove/main):
 **Build state:** ✅ Passes. `zig-out/bin/cove` exists. Not yet runtime-tested.
 
 **Next actions (in order):**
-1. **Runtime test Phase 1d features** — `./build.sh run`, then test:
-   - Hover over sidebar row → close button (X) appears
-   - Click X → workspace closes
-   - Middle-click sidebar row → workspace closes
-   - Right-click sidebar row → context menu with "Rename Workspace…" and "Close Workspace"
-   - Context menu items work (rename triggers title dialog, close removes workspace)
-   - Dismissing context menu (Escape / click elsewhere) works without crash
-2. **Fix any runtime issues** found during testing (likely: widget hierarchy issues, popover positioning, event propagation)
-3. **Commit** Phase 1d close/middle-click/context-menu when all 3 work: `cove: Phase 1d — close button, middle-click, context menu on sidebar rows`
-4. **Continue Phase 1d remaining items** — priority order:
-   - Keyboard navigation (Up/Down in sidebar) — may already work via `GtkListBox` built-in keyboard handling
-   - Drag-to-reorder sidebar rows — `GtkDragSource` + `GtkDropTarget` + `AdwTabView.reorderPage()`
-   - Sidebar width persistence — save `GtkPaned` position to config on change
-   - Double-click to rename — `GtkGestureClick` with `count=2`
-   - Sidebar auto-hide when 1 workspace — monitor `page-attached`/`page-detached` count
-5. **After Phase 1d complete:** commit, push to `origin/cove/main`, then start Phase 2 (notifications)
+1. ~~**Runtime test Phase 1d features**~~ → **DONE** (see next session)
+2. ~~**Fix runtime issues**~~ → **DONE** (see next session)
+3. ~~**Commit**~~ → **DONE** (see next session)
+
+### Session 2026-02-26 (cont.) — Phase 1 Complete, All Tests Passing
+
+**Work completed:**
+
+1. **Runtime tested all Phase 1 features (42/42 tests passing):**
+   - Sidebar basics: visible on launch (after fix), correct width, resize works, title display + updates
+   - Workspace CRUD: new workspace (+button and Ctrl+Shift+T), click/keybind/numbered switching, close, ordering, scrolling with 10+
+   - Sidebar toggle: button, menu entry, hidden+workspaces still functional
+   - Close button on hover: appears/disappears correctly, click closes workspace
+   - Middle-click close: works
+   - Right-click context menu: Rename and Close both work, correct target selection, Escape dismissal
+   - Splits within workspaces preserved across switches
+   - Search overlay, fullscreen (Ctrl+Enter), multiple windows all work
+   - Edge cases: rapid creation (20+), rapid switching, long/empty/unicode titles all handled
+
+2. **Bugs found and fixed during testing:**
+   - **Sidebar not visible by default:** Bidirectional binding between `sidebar-visible` property and `GtkToggleButton.active` raced during template init. Fix: explicitly set `priv.sidebar_visible = true` before `syncAppearance()`.
+   - **Context menu actions not firing (GMenu approach):** `GtkPopoverMenu` with `gio.Menu` model didn't properly dispatch `win.close-tab::this` and `win.prompt-tab-title` actions. Fix: replaced `GtkPopoverMenu`+`gio.Menu` with plain `GtkPopover` containing `GtkButton`s with direct click callbacks (`sidebarContextRename`, `sidebarContextClose`). Actions now call `self.performBindingAction(...)` directly.
+   - **Context menu popover not tracking:** Right-clicking row B while row A's menu was open required two clicks (first click dismissed A's menu, second opened B's). This is standard GTK popover grab behavior — accepted as-is.
+
+3. **Implemented double-click to rename:**
+   - Added `GtkGestureClick` with button=1 on each sidebar row
+   - `sidebarDoubleClick` callback checks `n_press == 2`, then calls `performBindingAction(.prompt_tab_title)`
+
+4. **Implemented reorder via context menu (Move Up/Down):**
+   - Context menu now has: Rename | separator | Move Up | Move Down | separator | Close
+   - Move Up/Down greyed out at list boundaries (first/last position)
+   - `sidebarContextMoveUp`/`sidebarContextMoveDown` call `AdwTabView.reorderPage()`
+   - Connected `page-reordered` signal in `window.blp` → `tabViewPageReordered` handler calls `sidebarRebuild()` which clears and recreates all sidebar rows from `AdwTabView` page list
+
+5. **Drag-to-reorder attempted and removed:**
+   - Implemented `GtkDragSource` (prepare signal returning `ContentProvider` with row index) + `GtkDropTarget` (drop signal calling `reorderPage`)
+   - **Crashed on every drag attempt** — `General protection exception` in `libgobject-2.0.so.0`
+   - Root cause: GTK's `DragSource` creates a visual snapshot of the dragged widget for the drag icon. The sidebar rows are near terminal surfaces with EGL/OpenGL contexts. The snapshot operation triggers EGL context creation/destruction cycles that corrupt GObject state.
+   - Tried deferred rebuild via `glib.idleAdd()` — still crashed (crash happens during drag start, not during drop)
+   - **Decision: removed drag-to-reorder entirely.** Context menu Move Up/Down is sufficient and reliable. Drag-to-reorder can be revisited later if a workaround is found (e.g., custom drag icon that avoids snapshotting, or GtkListBox row with a simpler widget tree).
+
+**Key decisions made:**
+1. **Context menu uses plain `GtkPopover` + `GtkButton`s, not `GtkPopoverMenu` + `gio.Menu`.** The GMenu/PopoverMenu approach had action dispatch issues (actions with string parameters like `win.close-tab::this` didn't fire). Direct button callbacks are simpler and more reliable. Menu items call `self.performBindingAction(...)` directly.
+2. **Reorder via context menu, not drag-and-drop.** GTK DragSource + terminal EGL contexts = crash. Move Up/Down menu items are safe and work. cmux uses drag-to-reorder via SwiftUI's `.draggable()` modifier + custom `SidebarTabDropDelegate` (~130 lines), but their Swift/AppKit stack doesn't have the EGL snapshot issue.
+3. **`sidebarRebuild()` is the canonical way to sync sidebar ↔ tab_view order.** It removes all rows and recreates them from `AdwTabView.getNthPage()`. Used after reorder and potentially useful for future operations (restore from session, etc.).
+4. **Double-click row = rename (GNOME convention).** cmux uses double-click on empty sidebar area to create a new workspace; rename is context-menu-only. We chose the GNOME convention (double-click row to rename) since it's more discoverable for Linux users.
+5. **Default keybinds differ from test plan assumptions:** Splits are `Ctrl+Shift+O` (right) / `Ctrl+Shift+E` (down), not `Ctrl+Shift+Enter`. Fullscreen is `Ctrl+Enter`, not `F11`. Updated test plan notes.
+
+**Commits:**
+- `febc8fd98` — "cove: Phase 1d — close button, middle-click, context menu"
+- `e0ae72a56` — "cove: Phase 1d — double-click rename, reorder via context menu"
+
+**Files modified:**
+- `src/apprt/gtk/class/window.zig` — `sidebarAddRow()` rewrite (row = hbox + label + close btn), 12 new callback functions, `sidebarRebuild()`, `tabViewPageReordered` handler, `sidebar_context_popover` field
+- `src/apprt/gtk/css/style.css` — `.cove-sidebar-close` styles
+- `src/apprt/gtk/ui/1.5/window.blp` — added `page-reordered` signal binding
+- `docs/plan.md` — cmux annotations, 202 manual test cases, automated test strategy
+- `docs/progress.md` — session log
+
+**Phase 1 is now fully complete.** All features implemented, all tests passing, pushed to `origin/cove/main`.
+
+**Next actions (in order):**
+1. **Phase 2: Notification system** — create `notification_store.zig`, hook `GHOSTTY_ACTION_DESKTOP_NOTIFICATION` / `RING_BELL` / `COMMAND_FINISHED` in `application.zig`, add blue badge to sidebar rows, desktop notifications via `g_application_send_notification()`, mark-as-read on workspace select, jump-to-unread action (`Ctrl+Shift+U`)
+2. Read cmux `TerminalNotificationStore.swift` (~510 lines) and `NotificationsPage.swift` (~250 lines) before implementing
+3. Start with the data model (`notification_store.zig`) then wire up signals, then UI (badges + desktop notify)

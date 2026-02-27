@@ -334,32 +334,34 @@ HSplitView
 - Progress bar (per-workspace) → **Phase 4** (populated via socket API `cove +progress`)
 - Pull request status (linked PRs with badges) → **Phase 4** (populated via socket API or git integration)
 
-#### 1d. Sidebar polish (IN PROGRESS)
+#### 1d. Sidebar polish ✅ COMPLETE
 
-- [ ] Close button (X) on sidebar row, visible on hover — **CODE COMPLETE, needs runtime testing**
-  - cmux: `TabItemView` close button in `ContentView.swift` ~L6360–6370; `Image(systemName: "xmark")` with `.opacity(showCloseButton ? 1 : 0)`; `showCloseButton` = `isHovering && tabs.count > 1` ~L6302; calls `tabManager.closeWorkspaceWithConfirmation(tab)` in `TabManager.swift` ~L1083–1167 (shows confirmation dialog if processes running)
-  - Implementation: Changed sidebar row from plain `GtkLabel` to `GtkBox` (label + close button); `GtkEventControllerMotion` enter/leave shows/hides button; close button triggers `tab_view.closePage(page)`. Signal connection syntax fixed — uses `gtk.Button.signals.clicked.connect()` pattern. **Build passes.**
-- [ ] Sidebar width persisted in config
-  - cmux: `SidebarState.persistedWidth` in `ContentView.swift` ~L232, `SessionPersistencePolicy.defaultSidebarWidth` / `sanitizedSidebarWidth()` in `SessionPersistence.swift` ~L10–27
-- [ ] Drag-to-resize via GtkPaned handle (already works — built into GtkPaned)
-  - cmux: Custom drag resizer in `ContentView.swift` ~L1548–1710 (we get this free from GtkPaned)
-- [ ] Keyboard navigation: Up/Down in sidebar, Enter to select
-  - cmux: Workspace switching via `TabManager.selectNextTab()` / `selectPreviousTab()` in `TabManager.swift` ~L1710–1745; Ctrl+Cmd+] / Ctrl+Cmd+[ keybinds. Ghostty already has `goto_tab` / `previous_tab` / `next_tab` actions — these should work with our `AdwTabView` unchanged.
-- [ ] Middle-click sidebar row to close workspace — **CODE COMPLETE, needs runtime testing**
-  - cmux: `MiddleClickCapture` NSViewRepresentable in `ContentView.swift` ~L8113–8148, used as overlay on sidebar row ~L6594; intercepts only `otherMouseDown` with `buttonNumber == 2`; calls `tabManager.closeWorkspaceWithConfirmation(tab)` in `TabManager.swift` ~L1083
-  - Implementation: `GtkGestureClick` with button=2 added to each sidebar row in `sidebarAddRow()`. Signal syntax fixed. **Build passes.**
-- [ ] Right-click context menu on sidebar rows (rename, close, move up/down, close others) — **CODE COMPLETE, needs runtime testing**
-  - cmux: `.contextMenu { ... }` block in `ContentView.swift` ~L6649–6800; items: Pin, Rename, Remove Custom Name, Tab Color submenu, Move Up/Down/Top, Move to Window, Close/Close Other/Close Below/Above, Mark Read/Unread
-  - Implementation: `GtkGestureClick` with button=3 → builds `gio.Menu` + `gtk.PopoverMenu` on-demand. Phase 1 scope: Rename + Close. Popover parented to row, unparented on close. Signal syntax fixed. **Build passes.**
-- [ ] Sidebar auto-hides when only 1 workspace (config option)
-  - cmux: `SidebarState.isVisible` in `ContentView.swift` ~L230, toggled via `palette.toggleSidebar` ~L3985; cmux does NOT auto-hide on 1 workspace — sidebar is always visible unless manually toggled. We should match this behavior (no auto-hide by default) but offer a config option.
-- [ ] Double-click sidebar row to rename workspace
-  - cmux: `.onTapGesture(count: 2)` in `ContentView.swift` ~L6080 (on empty sidebar area = new workspace); rename triggered from context menu → `promptRename()` ~L7337–7358 which shows `NSAlert` with `NSTextField` (current title pre-filled, select-all); also via command palette `palette.renameWorkspace` ~L4020. Note: cmux does NOT use double-click on a row to rename — double-click on empty area creates new workspace. We should decide: double-click row = rename (common UX convention) or match cmux's context-menu-only approach.
-- [ ] Drag-to-reorder sidebar rows
-  - cmux: `.draggable()` modifier on `TabItemView` in `ContentView.swift` ~L6570; `SidebarTabDropDelegate` ~L7979–8110 handles drop logic with animated indicators; `SidebarDragAutoScrollController` for auto-scroll during drag. Drop indicator shows blue line between rows.
-  - Implementation: Use `GtkDragSource` + `GtkDropTarget` on sidebar rows, reorder via `AdwTabView.reorderPage()`
+- [x] Close button (X) on sidebar row, visible on hover
+  - cmux: `TabItemView` close button in `ContentView.swift` ~L6360–6370
+  - Implementation: `GtkBox` (label + close button); `GtkEventControllerMotion` enter/leave shows/hides button; close button triggers `tab_view.closePage(page)`.
+- [x] Middle-click sidebar row to close workspace
+  - cmux: `MiddleClickCapture` in `ContentView.swift` ~L8113–8148
+  - Implementation: `GtkGestureClick` with button=2.
+- [x] Right-click context menu on sidebar rows (Rename, Move Up/Down, Close)
+  - cmux: `.contextMenu { ... }` block in `ContentView.swift` ~L6649–6800
+  - Implementation: Plain `GtkPopover` with `GtkButton`s + direct callbacks (not `GtkPopoverMenu`+`gio.Menu` — that approach had action dispatch issues). Menu items: Rename Workspace… | Move Up | Move Down | Close Workspace. Move Up/Down greyed at boundaries.
+- [x] Double-click sidebar row to rename workspace
+  - cmux: Context-menu-only rename. We chose GNOME convention: double-click row = rename.
+  - Implementation: `GtkGestureClick` button=1, `n_press == 2` → `performBindingAction(.prompt_tab_title)`.
+- [x] Reorder via context menu Move Up/Down
+  - Implementation: `AdwTabView.reorderPage()` + `page-reordered` signal → `sidebarRebuild()` (removes all rows, recreates from tab_view).
+- [x] Keyboard navigation: Up/Down in sidebar, Enter to select — built into `GtkListBox` with `selection-mode: browse`
+- [x] Drag-to-resize via GtkPaned handle — built into `GtkPaned`
+- [x] Fixed sidebar not visible by default (bidirectional binding race — explicitly set `sidebar_visible = true` before `syncAppearance()`)
 
-**Est:** ~350 lines
+**Deferred:**
+- [ ] Drag-to-reorder sidebar rows — **attempted and removed.** GTK `DragSource` creates visual snapshots that crash with terminal EGL contexts (`General protection exception` in `libgobject-2.0.so.0`). Tried deferred rebuild via `glib.idleAdd()` — still crashes during drag start. Revisit if workaround found.
+- [ ] Sidebar width persisted in config — needs `~/.config/cove/config` setup (Phase 3+)
+  - cmux: `SidebarState.persistedWidth` in `ContentView.swift` ~L232
+- [ ] Sidebar auto-hides when only 1 workspace — cmux does NOT auto-hide; skipped to match behavior
+
+**Commits:** `febc8fd98`, `e0ae72a56`
+**Est actual:** ~230 lines net new
 
 #### Phase 1 — Manual Testing Plan
 
@@ -1020,7 +1022,7 @@ browser CMD [ARGS]      → varies
 | Phase | Feature | Est. Lines | Status | Notes |
 |-------|---------|-----------|--------|-------|
 | 0 | Repo, build, attribution | 100 | ✅ Done | Commit `6816b450a` |
-| 1 | Vertical sidebar | 1,700 | 🟡 Core done | Commit `6363939c4`. Polish (1d) remaining (~350 lines). |
+| 1 | Vertical sidebar | 1,700 | ✅ Done | Commits `6363939c4`, `febc8fd98`, `e0ae72a56`. All 42 tests passing. |
 | 2 | Notifications | 400 | 🔲 | |
 | 3 | Workspace metadata + sidebar UX | 900 | 🔲 | +pin, tab color, multi-select, shortcut hints |
 | 4 | Socket API & CLI + metadata commands | 3,200 | 🔲 | +status, log, progress, PR, move-to-window |

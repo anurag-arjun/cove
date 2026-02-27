@@ -41,6 +41,7 @@ const ConfigErrorsDialog = @import("config_errors_dialog.zig").ConfigErrorsDialo
 const GlobalShortcuts = @import("global_shortcuts.zig").GlobalShortcuts;
 const NotificationStore = @import("../notification_store.zig");
 const SocketServer = @import("../socket_server.zig");
+const socket_commands = @import("../socket_commands.zig");
 
 const log = std.log.scoped(.gtk_ghostty_application);
 
@@ -1520,6 +1521,7 @@ pub const Application = extern struct {
         {
             const priv = self.private();
             if (priv.socket_server.server_fd == -1) {
+                priv.socket_server.setCommandHandler(socket_commands.createHandler());
                 priv.socket_server.start() catch |err| {
                     log.warn("failed to start socket server: {}", .{err});
                 };

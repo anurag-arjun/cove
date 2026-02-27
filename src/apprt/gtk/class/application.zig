@@ -489,13 +489,14 @@ pub const Application = extern struct {
 
     /// Cove: store a notification in the notification store.
     /// Handles tab_id extraction from surface, focus suppression, and error handling.
+    /// Returns true if the notification was stored (not suppressed).
     pub fn storeNotification(
         self: *Self,
         core_surface: *CoreSurface,
         title: []const u8,
         subtitle: []const u8,
         body: []const u8,
-    ) void {
+    ) bool {
         const gobj = core_surface.rt_surface.gobj();
         const widget = gobj.as(gtk.Widget);
 
@@ -504,8 +505,8 @@ pub const Application = extern struct {
         while (cur) |w| {
             if (gobject.ext.cast(Tab, w)) |tab| {
                 // Found the tab — now find its page in any window.
-                const root = w.getRoot() orelse return;
-                const window = gobject.ext.cast(Window, root) orelse return;
+                const root = w.getRoot() orelse return false;
+                const window = gobject.ext.cast(Window, root) orelse return false;
                 const tab_view = window.getTabView();
                 const n_pages = tab_view.getNPages();
 
@@ -525,7 +526,7 @@ pub const Application = extern struct {
                         const app_active = gtk_window.isActive() != 0;
 
                         const store = self.notificationStore();
-                        _ = store.add(
+                        const result = store.add(
                             tab_id,
                             surface_id,
                             title,
@@ -535,14 +536,22 @@ pub const Application = extern struct {
                             app_active,
                         ) catch |err| {
                             log.warn("failed to store notification: {}", .{err});
+                            return false;
                         };
-                        return;
+
+                        // Update sidebar badges.
+                        if (result.unread_count_changed) {
+                            window.sidebarUpdateBadges();
+                        }
+
+                        return result.notification_added;
                     }
                 }
-                return;
+                return false;
             }
             cur = w.getParent();
         }
+        return false;
     }
 
     /// Run the application. This is a replacement for `gio.Application.run`
@@ -1953,10 +1962,12 @@ const Action = struct {
         switch (target) {
             .app => {},
             .surface => |v| {
-                // Cove: store notification before sending desktop notification.
-                self.storeNotification(v, n.title, "", n.body);
-
-                v.rt_surface.gobj().sendDesktopNotification(n.title, n.body);
+                // Cove: store notification. Only send desktop notification
+                // if it wasn't suppressed (i.e., workspace is not focused).
+                const stored = self.storeNotification(v, n.title, "", n.body);
+                if (stored) {
+                    v.rt_surface.gobj().sendDesktopNotification(n.title, n.body);
+                }
                 return;
             },
         }
@@ -2491,7 +2502,7 @@ const Action = struct {
             .surface => |v| {
                 v.rt_surface.surface.setBellRinging(true);
                 // Cove: store bell notification.
-                self.storeNotification(v, "Bell", "", "");
+                _ = self.storeNotification(v, "Bell", "", "");
             },
         }
     }

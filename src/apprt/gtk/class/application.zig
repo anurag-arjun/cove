@@ -40,6 +40,7 @@ const CloseConfirmationDialog = @import("close_confirmation_dialog.zig").CloseCo
 const ConfigErrorsDialog = @import("config_errors_dialog.zig").ConfigErrorsDialog;
 const GlobalShortcuts = @import("global_shortcuts.zig").GlobalShortcuts;
 const NotificationStore = @import("../notification_store.zig");
+const SocketServer = @import("../socket_server.zig");
 
 const log = std.log.scoped(.gtk_ghostty_application);
 
@@ -216,6 +217,9 @@ pub const Application = extern struct {
 
         /// Cove: per-workspace notification store.
         notification_store: NotificationStore = undefined,
+
+        /// Cove: socket server for CLI/scripting control.
+        socket_server: SocketServer = undefined,
 
         pub var offset: c_int = 0;
     };
@@ -401,6 +405,7 @@ pub const Application = extern struct {
             .global_shortcuts = gobject.ext.newInstance(GlobalShortcuts, .{}),
             .saved_language = saved_language,
             .notification_store = NotificationStore.init(alloc),
+            .socket_server = SocketServer.init(alloc),
         };
 
         // Signals
@@ -439,6 +444,7 @@ pub const Application = extern struct {
         priv.global_shortcuts.unref();
         if (priv.saved_language) |language| alloc.free(language);
         priv.notification_store.deinit();
+        priv.socket_server.deinit();
         if (gdk.Display.getDefault()) |display| {
             gtk.StyleContext.removeProviderForDisplay(
                 display,
@@ -473,6 +479,11 @@ pub const Application = extern struct {
     /// Cove: access the notification store.
     pub fn notificationStore(self: *Self) *NotificationStore {
         return &self.private().notification_store;
+    }
+
+    /// Cove: access the socket server.
+    pub fn socketServer(self: *Self) *SocketServer {
+        return &self.private().socket_server;
     }
 
     /// Cove: store a notification in the notification store.
@@ -1504,6 +1515,16 @@ pub const Application = extern struct {
 
     fn activate(self: *Self) callconv(.c) void {
         log.debug("activate", .{});
+
+        // Cove: start socket server (only on first activate).
+        {
+            const priv = self.private();
+            if (priv.socket_server.server_fd == -1) {
+                priv.socket_server.start() catch |err| {
+                    log.warn("failed to start socket server: {}", .{err});
+                };
+            }
+        }
 
         // Queue a new window
         const priv = self.private();

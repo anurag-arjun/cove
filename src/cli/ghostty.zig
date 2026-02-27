@@ -19,6 +19,7 @@ const crash_report = @import("crash_report.zig");
 const show_face = @import("show_face.zig");
 const boo = @import("boo.zig");
 const new_window = @import("new_window.zig");
+const cove_socket = @import("cove_socket.zig");
 
 /// Special commands that can be invoked via CLI flags. These are all
 /// invoked by using `+<action>` as a CLI flag. The only exception is
@@ -68,6 +69,17 @@ pub const Action = enum {
 
     // Use IPC to tell the running Ghostty to open a new window.
     @"new-window",
+
+    // Cove socket subcommands.
+    ping,
+    @"list-workspaces",
+    @"new-workspace",
+    @"close-workspace",
+    @"select-workspace",
+    @"rename-workspace",
+    @"list-notifications",
+    @"mark-read",
+    @"notify",
 
     pub fn detectSpecialCase(arg: []const u8) ?SpecialCase(Action) {
         // If we see a "-e" and we haven't seen a command yet, then
@@ -147,6 +159,17 @@ pub const Action = enum {
             .@"show-face" => try show_face.run(alloc),
             .boo => try boo.run(alloc),
             .@"new-window" => try new_window.run(alloc),
+
+            // Cove socket subcommands.
+            .ping => try cove_socket.runPing(alloc),
+            .@"list-workspaces" => try cove_socket.runListWorkspaces(alloc),
+            .@"new-workspace" => try cove_socket.runNewWorkspace(alloc),
+            .@"close-workspace" => try cove_socket.runCloseWorkspace(alloc),
+            .@"select-workspace" => try cove_socket.runSelectWorkspace(alloc),
+            .@"rename-workspace" => try cove_socket.runRenameWorkspace(alloc),
+            .@"list-notifications" => try cove_socket.runListNotifications(alloc),
+            .@"mark-read" => try cove_socket.runMarkRead(alloc),
+            .@"notify" => try cove_socket.runNotify(alloc),
         };
     }
 
@@ -154,14 +177,25 @@ pub const Action = enum {
     /// path from the root src/ directory.
     pub fn file(comptime self: Action) []const u8 {
         comptime {
-            const filename = filename: {
-                const tag = @tagName(self);
-                var filename: [tag.len]u8 = undefined;
-                _ = std.mem.replace(u8, tag, "-", "_", &filename);
-                break :filename &filename;
+            // Cove socket subcommands all map to the same file.
+            return switch (self) {
+                .ping,
+                .@"list-workspaces",
+                .@"new-workspace",
+                .@"close-workspace",
+                .@"select-workspace",
+                .@"rename-workspace",
+                .@"list-notifications",
+                .@"mark-read",
+                .@"notify",
+                => "cli/cove_socket.zig",
+                else => {
+                    const tag = @tagName(self);
+                    var filename: [tag.len]u8 = undefined;
+                    _ = std.mem.replace(u8, tag, "-", "_", &filename);
+                    return "cli/" ++ &filename ++ ".zig";
+                },
             };
-
-            return "cli/" ++ filename ++ ".zig";
         }
     }
 
@@ -186,6 +220,18 @@ pub const Action = enum {
                 .@"show-face" => show_face.Options,
                 .boo => boo.Options,
                 .@"new-window" => new_window.Options,
+
+                // Cove socket subcommands all use same options.
+                .ping,
+                .@"list-workspaces",
+                .@"new-workspace",
+                .@"close-workspace",
+                .@"select-workspace",
+                .@"rename-workspace",
+                .@"list-notifications",
+                .@"mark-read",
+                .@"notify",
+                => cove_socket.Options,
             };
         }
     }

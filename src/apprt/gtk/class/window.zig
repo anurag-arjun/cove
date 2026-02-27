@@ -2168,6 +2168,51 @@ pub const Window = extern struct {
         }
     }
 
+    /// Jump to the workspace with the latest unread notification.
+    /// Returns true if a workspace was found and selected.
+    pub fn jumpToUnread(self: *Self) bool {
+        const priv = self.private();
+        const tab_view = priv.tab_view;
+        const app = Application.default();
+        const store = app.notificationStore();
+        const n_pages = tab_view.getNPages();
+
+        // Find workspace with most recent unread notification.
+        var best_page: ?*adw.TabPage = null;
+        var best_time: i64 = std.math.minInt(i64);
+
+        var i: c_int = 0;
+        while (i < n_pages) : (i += 1) {
+            const page = tab_view.getNthPage(i);
+            const tab_id: NotificationStore.TabId = @intFromPtr(page);
+            if (store.unreadCountForTab(tab_id) > 0) {
+                if (store.latestNotification(tab_id)) |notif| {
+                    if (notif.created_at > best_time) {
+                        best_time = notif.created_at;
+                        best_page = page;
+                    }
+                }
+            }
+        }
+
+        if (best_page) |page| {
+            tab_view.setSelectedPage(page);
+            // Mark as read and update badges.
+            const tab_id: NotificationStore.TabId = @intFromPtr(page);
+            const result = store.markReadForTab(tab_id);
+            if (result.unread_count_changed) {
+                self.sidebarUpdateBadges();
+            }
+            self.sidebarSyncSelection();
+            if (self.getActiveSurface()) |surface| {
+                surface.grabFocus();
+            }
+            return true;
+        }
+
+        return false;
+    }
+
     /// Get the close button stored on a sidebar row.
     fn sidebarRowGetCloseBtn(row: *gtk.ListBoxRow) ?*gtk.Button {
         const data = row.as(gobject.Object).getData("cove-close-btn") orelse return null;

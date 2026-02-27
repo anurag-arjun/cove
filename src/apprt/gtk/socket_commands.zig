@@ -72,8 +72,9 @@ fn dispatchInner(request: []const u8, response_buf: []u8) !usize {
     if (std.mem.eql(u8, cmd, "list-notifications")) return cmdListNotifications(root.object, response_buf);
     if (std.mem.eql(u8, cmd, "mark-read")) return cmdMarkRead(root.object, response_buf);
     if (std.mem.eql(u8, cmd, "notify")) return cmdNotify(root.object, response_buf);
+    if (std.mem.eql(u8, cmd, "jump-to-unread")) return cmdJumpToUnread(response_buf);
 
-    return writeErrorSimple(response_buf, "unknown command. Available: ping, list-workspaces, new-workspace, close-workspace, select-workspace, rename-workspace, list-notifications, mark-read, notify", "UNKNOWN_COMMAND");
+    return writeErrorSimple(response_buf, "unknown command. Available: ping, list-workspaces, new-workspace, close-workspace, select-workspace, rename-workspace, list-notifications, mark-read, notify, jump-to-unread", "UNKNOWN_COMMAND");
 }
 
 // --- Command handlers ---
@@ -278,6 +279,14 @@ fn cmdNotify(obj: std.json.ObjectMap, buf: []u8) usize {
     };
 
     return writeOk(buf);
+}
+
+fn cmdJumpToUnread(buf: []u8) usize {
+    const window = getWindow() orelse return writeErrorSimple(buf, "no window", "NO_WINDOW");
+    if (window.jumpToUnread()) {
+        return writeOk(buf);
+    }
+    return writeErrorSimple(buf, "no unread notifications", "NO_UNREAD");
 }
 
 // --- Helpers ---

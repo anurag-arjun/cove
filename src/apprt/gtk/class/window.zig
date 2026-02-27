@@ -31,6 +31,7 @@ const CommandPalette = @import("command_palette.zig").CommandPalette;
 const WeakRef = @import("../weak_ref.zig").WeakRef;
 const git_branch = @import("../git_branch.zig");
 const path_shorten = @import("../path_shorten.zig");
+const NotificationStore = @import("../notification_store.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
 
@@ -445,6 +446,13 @@ pub const Window = extern struct {
         const hbox = gtk.Box.new(.horizontal, 0);
         hbox.as(gtk.Widget).setHexpand(@intFromBool(true));
 
+        // Unread badge (hidden by default)
+        const badge = gtk.Label.new("");
+        badge.as(gtk.Widget).addCssClass("cove-sidebar-badge");
+        badge.as(gtk.Widget).setVisible(@intFromBool(false));
+        badge.as(gtk.Widget).setValign(.center);
+        hbox.append(badge.as(gtk.Widget));
+
         // Title label (expands to fill)
         const label = gtk.Label.new("Workspace");
         label.setXalign(0);
@@ -492,6 +500,7 @@ pub const Window = extern struct {
         row.as(gobject.Object).setData("cove-tab-page", page);
         row.as(gobject.Object).setData("cove-close-btn", close_btn);
         row.as(gobject.Object).setData("cove-subtitle", subtitle);
+        row.as(gobject.Object).setData("cove-badge", badge);
 
         // Close button click → close the workspace
         _ = gtk.Button.signals.clicked.connect(close_btn, *Self, &sidebarCloseClicked, self, .{});
@@ -2005,6 +2014,46 @@ pub const Window = extern struct {
         return @ptrCast(@alignCast(data));
     }
 
+    /// Get the badge label stored on a sidebar row.
+    fn sidebarRowGetBadge(row: *gtk.ListBoxRow) ?*gtk.Label {
+        const data = row.as(gobject.Object).getData("cove-badge") orelse return null;
+        return @ptrCast(@alignCast(data));
+    }
+
+    /// Update all sidebar row badges from the notification store.
+    pub fn sidebarUpdateBadges(self: *Self) void {
+        const priv = self.private();
+        const list = priv.sidebar_list;
+        const app = Application.default();
+        const store = app.notificationStore();
+
+        var i: c_int = 0;
+        while (true) : (i += 1) {
+            const row = list.getRowAtIndex(i) orelse break;
+            const page = sidebarRowGetPage(row) orelse continue;
+            const badge_label = sidebarRowGetBadge(row) orelse continue;
+
+            const tab_id: NotificationStore.TabId = @intFromPtr(page);
+            const count = store.unreadCountForTab(tab_id);
+
+            if (count == 0) {
+                badge_label.as(gtk.Widget).setVisible(@intFromBool(false));
+            } else {
+                var count_buf: [4]u8 = undefined;
+                const count_str = if (count > 9) "9+" else std.fmt.bufPrint(&count_buf, "{}", .{count}) catch "?";
+                // Null-terminate.
+                var label_buf: [4]u8 = undefined;
+                if (count_str.len < label_buf.len) {
+                    @memcpy(label_buf[0..count_str.len], count_str);
+                    label_buf[count_str.len] = 0;
+                    const z: [*:0]const u8 = label_buf[0..count_str.len :0];
+                    badge_label.setLabel(z);
+                }
+                badge_label.as(gtk.Widget).setVisible(@intFromBool(true));
+            }
+        }
+    }
+
     /// Public: update sidebar metadata for the tab page containing a given surface.
     /// Called from Application when pwd changes.
     pub fn updateSidebarMetadataForSurface(self: *Self, surface: *Surface) void {
@@ -2377,6 +2426,15 @@ pub const Window = extern struct {
         const page = sidebarRowGetPage(row) orelse return;
 
         priv.tab_view.setSelectedPage(page);
+
+        // Cove: mark notifications as read for the selected workspace.
+        const tab_id: NotificationStore.TabId = @intFromPtr(page);
+        const app = Application.default();
+        const store = app.notificationStore();
+        const result = store.markReadForTab(tab_id);
+        if (result.unread_count_changed) {
+            self.sidebarUpdateBadges();
+        }
 
         // Focus the terminal surface
         if (self.getActiveSurface()) |surface| {

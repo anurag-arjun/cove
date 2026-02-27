@@ -1,4 +1,9 @@
-# Cove: Progress Log
+# Cove: Progress Log (ARCHIVED)
+
+> **This file is archived.** Task tracking has moved to `br` (run `br epic status`, `br ready`).
+> Session context is now in [CONTEXT.md](CONTEXT.md). Design reference remains in [plan.md](plan.md).
+>
+> This file is kept as a historical record of Phase 0–1 development sessions.
 
 > A workspace-oriented terminal for Linux, inspired by [cmux](https://github.com/manaflow-ai/cmux) and built on [Ghostty](https://github.com/ghostty-org/ghostty)'s GTK frontend.
 >

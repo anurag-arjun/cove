@@ -28,3 +28,7 @@ vgcore.*
 
 # CachyOS build workaround
 crt-patched/
+
+# Local project tracking
+docs/
+.beads/

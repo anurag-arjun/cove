@@ -39,6 +39,7 @@ const Tab = @import("tab.zig").Tab;
 const CloseConfirmationDialog = @import("close_confirmation_dialog.zig").CloseConfirmationDialog;
 const ConfigErrorsDialog = @import("config_errors_dialog.zig").ConfigErrorsDialog;
 const GlobalShortcuts = @import("global_shortcuts.zig").GlobalShortcuts;
+const NotificationStore = @import("../notification_store.zig");
 
 const log = std.log.scoped(.gtk_ghostty_application);
 
@@ -212,6 +213,9 @@ pub const Application = extern struct {
         /// by the system. If this is null, the LANG environment variable did
         /// not exist in Ghostty's environment variable.
         saved_language: ?[:0]const u8 = null,
+
+        /// Cove: per-workspace notification store.
+        notification_store: NotificationStore = undefined,
 
         pub var offset: c_int = 0;
     };
@@ -396,6 +400,7 @@ pub const Application = extern struct {
             .custom_css_providers = .empty,
             .global_shortcuts = gobject.ext.newInstance(GlobalShortcuts, .{}),
             .saved_language = saved_language,
+            .notification_store = NotificationStore.init(alloc),
         };
 
         // Signals
@@ -433,6 +438,7 @@ pub const Application = extern struct {
         priv.winproto.deinit(alloc);
         priv.global_shortcuts.unref();
         if (priv.saved_language) |language| alloc.free(language);
+        priv.notification_store.deinit();
         if (gdk.Display.getDefault()) |display| {
             gtk.StyleContext.removeProviderForDisplay(
                 display,
@@ -462,6 +468,11 @@ pub const Application = extern struct {
     /// pointer to internal memory so it must be copied by callers.
     pub fn savedLanguage(self: *Self) ?[:0]const u8 {
         return self.private().saved_language;
+    }
+
+    /// Cove: access the notification store.
+    pub fn notificationStore(self: *Self) *NotificationStore {
+        return &self.private().notification_store;
     }
 
     /// Run the application. This is a replacement for `gio.Application.run`
